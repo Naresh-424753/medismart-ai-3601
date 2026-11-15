@@ -23,6 +23,13 @@ async def seed(db):
             print(f"[MediSmart] First-run administrator created: {settings.ADMIN_EMAIL}  one-time password: {pw}  (shown once; change it after login)", flush=True)
         await db.users.insert_one({"id": new_id(), "name": "Super Admin", "email": settings.ADMIN_EMAIL, "phone": "", "role": "super_admin", "password_hash": hash_password(pw),
                                    "email_verified": True, "approved": True, "status": "active", "two_factor": False, "created_at": now()})
+    elif settings.ADMIN_EMAIL:
+        # self-heal: the owner account named in ADMIN_EMAIL must stay super_admin and usable
+        u = await db.users.find_one({"email": settings.ADMIN_EMAIL})
+        fix = {k: v for k, v in {"role": "super_admin", "approved": True, "status": "active", "email_verified": True}.items() if u.get(k) != v}
+        if fix:
+            await db.users.update_one({"id": u["id"]}, {"$set": {**fix, "locked_until": None, "failed_logins": 0}})
+            print(f"[MediSmart] Restored super admin account {settings.ADMIN_EMAIL}: {sorted(fix)}", flush=True)
     elif not settings.ADMIN_EMAIL and not await db.users.find_one({"role": "super_admin"}):
         print("[MediSmart] No administrator exists. Set ADMIN_EMAIL (and optionally ADMIN_PASSWORD) in backend/.env, or run: python create_admin.py", flush=True)
     if not settings.SEED_DEMO or await db.hospitals.count_documents({}) > 0:

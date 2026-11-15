@@ -112,6 +112,8 @@ async def create_admin(email: str, user: dict = Depends(super_only)):
     t = await db.users.find_one({"email": email.lower()})
     if not t:
         raise HTTPException(404, "User not found")
+    if t["role"] == "super_admin":
+        raise HTTPException(400, "This is the super admin account. It cannot be changed to admin.")
     await db.users.update_one({"id": t["id"]}, {"$set": {"role": "admin", "approved": True}})
     await audit(db, user["id"], "make_admin", email)
     return {"ok": True}

@@ -34,6 +34,9 @@ import RxScan from "./pages/RxScan.jsx";
 import RxVerify from "./pages/RxVerify.jsx";
 import RecordSecurity from "./pages/RecordSecurity.jsx";
 import Contact, { ContactFab } from "./pages/Contact.jsx";
+import Site from "./pages/Site.jsx";
+import Bills from "./pages/Bills.jsx";
+import SiteAdmin from "./pages/SiteAdmin.jsx";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -51,6 +54,7 @@ export default function App() {
       <Route path="/card/:token" element={<PublicCard />} />
       <Route path="/kiosk" element={<Kiosk />} />
       <Route path="/contact" element={<Contact />} />
+      <Route path="/hospital" element={<Site />} />
       <Route element={<Protected><Layout /></Protected>}>
         <Route index element={<Home />} />
         <Route path="risk" element={<Risk />} />
@@ -81,6 +85,8 @@ export default function App() {
         <Route path="rx-scan" element={<RxScan />} />
         <Route path="rx-verify" element={<RxVerify />} />
         <Route path="security" element={<RecordSecurity />} />
+        <Route path="bills" element={<Bills />} />
+        <Route path="site-admin" element={<SiteAdmin />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

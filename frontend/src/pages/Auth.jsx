@@ -60,6 +60,7 @@ export function Login() {
       </form>
       <div className="flex justify-between text-sm">
         <Link className="text-brand-700 hover:underline" to="/forgot">Forgot password?</Link>
+        <Link className="text-brand-700 hover:underline" to="/hospital">Hospital website</Link>
         <Link className="text-brand-700 hover:underline" to="/kiosk">Health kiosk</Link>
         <Link className="text-brand-700 hover:underline" to="/register">Create account</Link>
       </div>

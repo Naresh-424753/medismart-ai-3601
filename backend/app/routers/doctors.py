@@ -17,6 +17,9 @@ class DoctorIn(BaseModel):
     experience_years: int | None = Field(default=None, ge=0, le=70)
     fee: int | None = Field(default=None, ge=0, le=100000)
     bio: str | None = None
+    qualification: str | None = Field(default=None, max_length=150)
+    opd_timing: str | None = Field(default=None, max_length=150)
+    photo_url: str | None = Field(default=None, pattern=r"^https://\S+$", max_length=500)
     hospital: str | None = None
     city: str | None = None
     availability: dict | None = None  # {"days":[0..6], "slots":["10:00",...]}
@@ -44,7 +47,7 @@ class FeedbackIn(BaseModel):
 
 
 def _public_doctor(d: dict) -> dict:
-    return {k: d.get(k) for k in ("id", "user_id", "name", "specialization", "experience_years", "fee", "bio", "hospital", "city", "availability", "rating", "rating_count")}
+    return {k: d.get(k) for k in ("id", "user_id", "name", "specialization", "experience_years", "fee", "bio", "qualification", "opd_timing", "photo_url", "hospital", "city", "availability", "rating", "rating_count")}
 
 
 async def _visible_doctor_ids(db) -> set:
@@ -127,7 +130,7 @@ async def book(body: ApptIn, user: dict = Depends(patient_only)):
     await log_event(db, user["id"], "appointment", f"Appointment booked with {d['name']} on {body.date} {body.time}")
     doctor_user = await db.users.find_one({"id": d["user_id"]})
     await notify(db, doctor_user, "New appointment", f"{user['name']} booked {body.date} {body.time}", "appointment")
-    await notify(db, user, "Appointment confirmed", f"{d['name']} - {body.date} {body.time}", "appointment", ("app", "email"))
+    await notify(db, user, "Appointment confirmed", f"{d['name']} - {body.date} {body.time}", "appointment", ("app", "email", "sms"))
     doc.pop("_id", None)
     return doc
 

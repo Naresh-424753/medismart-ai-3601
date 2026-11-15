@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from .config import settings
 from .db import check_connection, ensure_indexes, get_db, use_mock
-from .routers import admin, ai, assistant, contact, board, analytics, auth, blood, chat, doctors, emergency, extras, federated, hospital_ops, hospitals, labs, ews, ledger, medicines, messaging, patients, reports, rx_scan, telemedicine, vitals, voice, wearables, wellness
+from .routers import admin, ai, assistant, contact, board, analytics, auth, blood, chat, doctors, emergency, extras, federated, hospital_ops, hospitals, labs, ews, ledger, medicines, messaging, patients, reports, rx_scan, site, telemedicine, vitals, voice, wearables, wellness
 from .scheduler import run_forever
 from .seed import seed
 
@@ -52,7 +52,7 @@ app.add_middleware(CORSMiddleware, allow_origins=settings.CORS_ORIGINS, allow_cr
 
 _hits: dict[str, deque] = defaultdict(deque)
 RATE_LIMITS = {"/auth/login": (10, 60), "/auth/register": (10, 300), "/auth/verify-otp": (15, 300), "/auth/forgot-password": (5, 300), "/auth/resend-otp": (5, 300),
-               "/contact": (5, 300), "/voice/transcribe": (20, 60), "/voice/symptom-check": (20, 60), "/kiosk/symptom-check": (30, 60), "/kiosk/bmi": (30, 60)}
+               "/contact": (5, 300), "/site/feedback": (5, 300), "/voice/transcribe": (20, 60), "/voice/symptom-check": (20, 60), "/kiosk/symptom-check": (30, 60), "/kiosk/bmi": (30, 60)}
 
 
 @app.middleware("http")
@@ -79,7 +79,7 @@ async def security_middleware(request: Request, call_next):
 for r in (auth.router, patients.router, ai.router, reports.router, chat.router, medicines.router, doctors.router, vitals.router, ews.router, federated.router, emergency.router, emergency.public,
           hospitals.router, labs.router, blood.router, wellness.router, analytics.router, admin.router, admin.family,
           messaging.router, hospital_ops.router, extras.router, extras.kiosk,
-          ledger.router, rx_scan.router, wearables.router, telemedicine.router, voice.router, board.router, contact.router, assistant.router):
+          ledger.router, rx_scan.router, wearables.router, telemedicine.router, voice.router, board.router, contact.router, assistant.router, site.router):
     app.include_router(r)
 
 

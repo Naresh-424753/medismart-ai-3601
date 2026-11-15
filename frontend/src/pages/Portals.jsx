@@ -1,5 +1,6 @@
 // Workspaces for professional roles: pharmacist, ambulance, hospital, lab, blood bank, admin.
 import { useEffect, useRef, useState } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import { api } from "../api.js";
 import { useAuth } from "../auth.jsx";
 import { Alert, Badge, Card, Empty, Field, Stat, textToList, toneFor, useAsync } from "../components/ui.jsx";
@@ -163,26 +164,28 @@ export function HospitalHome() {
   const [dept, setDept] = useState("OPD");
   const [serving, setServing] = useState(null);
   const [a, setA] = useState({ patient_name: "", health_id: "", ward: "general", doctor: "", reason: "" });
-  const [b, setB] = useState({ patient_name: "", items: "Consultation:500" });
+  const [b, setB] = useState({ patient_name: "", health_id: "", items: "Consultation:500" });
+  const [qr, setQr] = useState(null); // { id, info, utr }
   const [prof, setProf] = useState({ address: "", city: "", phone: "", lat: "", lon: "", departments: "", specialities: "" });
   const { busy, error, run } = useAsync();
   const load = () => run(async () => {
     const me = await api("/hospitals/me"); setH(me);
     setBeds(Object.fromEntries(WARDS.map((w) => [w, [me.beds[w].total, me.beds[w].available]])));
-    setProf({ address: me.address, city: me.city, phone: me.phone, lat: me.lat, lon: me.lon, departments: me.departments.join(", "), specialities: me.specialities.join(", ") });
+    setProf({ address: me.address, city: me.city, phone: me.phone, lat: me.lat, lon: me.lon, departments: me.departments.join(", "), specialities: me.specialities.join(", "), upi_id: me.upi_id || "" });
     setAdm(await api("/hospitals/me/admissions")); setBills(await api("/hospitals/me/bills")); setAn(await api("/hospitals/me/analytics"));
   });
   useEffect(() => { load(); }, []);
   const saveBeds = () => run(async () => { await api("/hospitals/me/beds", { method: "PUT", body: beds }); load(); });
-  const saveProf = (e) => { e.preventDefault(); run(async () => { await api("/hospitals/me", { method: "PUT", body: { address: prof.address, city: prof.city, phone: prof.phone, lat: +prof.lat || 0, lon: +prof.lon || 0, departments: textToList(prof.departments), specialities: textToList(prof.specialities) } }); load(); }); };
+  const saveProf = (e) => { e.preventDefault(); run(async () => { await api("/hospitals/me", { method: "PUT", body: { address: prof.address, city: prof.city, phone: prof.phone, lat: +prof.lat || 0, lon: +prof.lon || 0, departments: textToList(prof.departments), specialities: textToList(prof.specialities), upi_id: prof.upi_id || null } }); load(); }); };
   const admit = (e) => { e.preventDefault(); run(async () => { await api("/hospitals/me/admissions", { method: "POST", body: { ...a, health_id: a.health_id || null } }); setA({ ...a, patient_name: "", health_id: "", reason: "" }); load(); }); };
   const discharge = (id) => run(async () => { await api(`/hospitals/me/admissions/${id}/discharge`, { method: "POST" }); load(); });
   const bill = (e) => {
     e.preventDefault();
     const items = b.items.split(",").map((x) => x.split(":")).map(([name, amount]) => ({ name: (name || "").trim(), amount: +amount || 0 }));
-    run(async () => { await api("/hospitals/me/bills", { method: "POST", body: { patient_name: b.patient_name, items } }); setB({ ...b, patient_name: "" }); load(); });
+    run(async () => { await api("/hospitals/me/bills", { method: "POST", body: { patient_name: b.patient_name, health_id: b.health_id || null, items } }); setB({ ...b, patient_name: "", health_id: "" }); load(); });
   };
-  const pay = (id) => run(async () => { await api(`/hospitals/me/bills/${id}`, { method: "PATCH" }); load(); });
+  const showQr = (id, utr = "") => run(async () => { setQr({ id, info: await api(`/hospitals/me/bills/${id}/pay`), utr }); });
+  const pay = (id, body) => run(async () => { await api(`/hospitals/me/bills/${id}`, { method: "PATCH", body }); setQr(null); load(); });
   const next = () => run(async () => { const r = await api(`/hospitals/me/queue/next?${q({ department: dept })}`, { method: "POST" }); setServing(r.now_serving); });
   return (
     <>
@@ -211,8 +214,23 @@ export function HospitalHome() {
       </Card>
       <div className="grid gap-4 md:grid-cols-2">
         <Card title="Billing">
-          <form onSubmit={bill} className="space-y-2"><input className="input" placeholder="Patient name" required value={b.patient_name} onChange={(e) => setB({ ...b, patient_name: e.target.value })} /><input className="input" placeholder="item:amount, item:amount" value={b.items} onChange={(e) => setB({ ...b, items: e.target.value })} /><button className="btn-primary">Create bill</button></form>
-          <ul className="mt-3 divide-y divide-slate-100 text-sm">{bills.slice(0, 10).map((x) => <li key={x.id} className="flex items-center justify-between py-1.5"><span>{x.patient_name} · ₹{x.total}</span>{x.status === "paid" ? <Badge tone="good">paid</Badge> : <button className="btn-ghost py-1" onClick={() => pay(x.id)}>Mark paid</button>}</li>)}</ul>
+          <form onSubmit={bill} className="space-y-2"><input className="input" placeholder="Patient name" required value={b.patient_name} onChange={(e) => setB({ ...b, patient_name: e.target.value })} /><input className="input" placeholder="Patient Health ID (optional, lets the patient pay online)" value={b.health_id} onChange={(e) => setB({ ...b, health_id: e.target.value.trim() })} /><input className="input" placeholder="item:amount, item:amount" value={b.items} onChange={(e) => setB({ ...b, items: e.target.value })} /><button className="btn-primary">Create bill</button></form>
+          <ul className="mt-3 divide-y divide-slate-100 text-sm">{bills.slice(0, 10).map((x) => (
+            <li key={x.id} className="py-1.5">
+              <div className="flex items-center justify-between"><span>{x.patient_name} · ₹{x.total}</span>
+                {x.status === "paid" ? <Badge tone="good">paid{x.payment_method ? ` · ${x.payment_method}` : ""}</Badge>
+                  : <span className="flex items-center gap-2"><Badge tone="warn">{x.utr ? `patient paid · ref ${x.utr}` : "unpaid"}</Badge><button className="btn-ghost py-1" onClick={() => (qr?.id === x.id ? setQr(null) : showQr(x.id, x.utr || ""))}>{qr?.id === x.id ? "Hide QR" : "Pay with QR"}</button></span>}</div>
+              {qr?.id === x.id && (
+                <div className="mt-2 flex flex-col items-center gap-2 rounded-lg border border-slate-200 p-3">
+                  <QRCodeSVG value={qr.info.upi_uri} size={160} />
+                  <p className="text-center text-xs text-slate-600">Scan with any UPI app and pay <b>₹{qr.info.amount}</b> to <b>{qr.info.payee}</b> ({qr.info.vpa})</p>
+                  {qr.info.demo && <p className="text-xs text-amber-700">Demo QR: no real UPI ID is set, so scanning cannot move money. Add your UPI ID in Hospital profile.</p>}
+                  <div className="flex w-full gap-2"><input className="input" inputMode="numeric" maxLength={12} placeholder="12-digit UPI ref (UTR) after payment" value={qr.utr} onChange={(e) => setQr({ ...qr, utr: e.target.value.replace(/\D/g, "") })} />
+                    <button className="btn-primary py-1" disabled={busy || qr.utr.length !== 12} onClick={() => pay(x.id, { method: "upi", utr: qr.utr })}>Confirm paid</button></div>
+                  <button className="text-xs text-slate-500 underline" onClick={() => pay(x.id, { method: "cash" })}>Patient paid cash instead</button>
+                </div>
+              )}
+            </li>))}</ul>
         </Card>
         <Card title="OPD token queue">
           <div className="flex gap-2"><select className="input" value={dept} onChange={(e) => setDept(e.target.value)}>{(h?.departments || ["OPD"]).map((d) => <option key={d}>{d}</option>)}</select><button className="btn-primary" onClick={next}>Call next</button></div>
@@ -221,7 +239,7 @@ export function HospitalHome() {
       </div>
       <Card title="Hospital profile">
         <form onSubmit={saveProf} className="grid gap-3 md:grid-cols-3">
-          {[["address", "Address"], ["city", "City"], ["phone", "Phone"], ["lat", "Latitude"], ["lon", "Longitude"], ["departments", "Departments (comma)"], ["specialities", "Specialities (comma)"]].map(([k, l]) => <Field key={k} label={l}><input className="input" value={prof[k]} onChange={(e) => setProf({ ...prof, [k]: e.target.value })} /></Field>)}
+          {[["address", "Address"], ["city", "City"], ["phone", "Phone"], ["lat", "Latitude"], ["lon", "Longitude"], ["departments", "Departments (comma)"], ["specialities", "Specialities (comma)"], ["upi_id", "UPI ID for bill payments (e.g. hospital@okhdfcbank)"]].map(([k, l]) => <Field key={k} label={l}><input className="input" value={prof[k]} onChange={(e) => setProf({ ...prof, [k]: e.target.value })} /></Field>)}
           <div className="flex items-end"><button className="btn-primary">Save profile</button></div>
         </form>
         <p className="mt-2 text-xs text-slate-500">Latitude/longitude power nearest-hospital search and ambulance routing.</p>

@@ -9,6 +9,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATTERNS = {
     "Google/Gemini API key": r"AIza[0-9A-Za-z_\-]{35}",
+    "Google API key (new format)": r"\bAQ\.[0-9A-Za-z_\-]{30,}",
     "Anthropic key": r"sk-ant-[0-9A-Za-z_\-]{20,}",
     "OpenAI-style key": r"sk-[0-9A-Za-z]{32,}",
     "Brevo key": r"xkeysib-[0-9a-f]{20,}",

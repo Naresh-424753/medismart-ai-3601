@@ -32,6 +32,7 @@ class BillIn(BaseModel):
     patient_name: str
     items: list[dict]
     admission_id: str | None = None
+    health_id: str | None = None
 
 
 class TokenIn(BaseModel):
@@ -103,6 +104,7 @@ class ProfileIn(BaseModel):
     lon: float | None = Field(default=None, ge=-180, le=180)
     departments: list[str] | None = None
     specialities: list[str] | None = None
+    upi_id: str | None = Field(default=None, max_length=60, pattern=r"^[\w.\-]{2,}@[A-Za-z][A-Za-z0-9.\-]{1,}$")
 
 
 @router.put("/me")
@@ -163,9 +165,15 @@ async def create_bill(body: BillIn, user: dict = Depends(hospital_only)):
     items = [{"name": str(i.get("name", ""))[:80], "amount": float(i.get("amount", 0))} for i in body.items]
     if not items or any(i["amount"] < 0 for i in items):
         raise HTTPException(400, "Provide items with non-negative amounts")
-    doc = {"id": new_id(), "hospital_id": h["id"], "patient_name": body.patient_name, "admission_id": body.admission_id, "items": items,
+    pat = await db.patients.find_one({"health_id": body.health_id}) if body.health_id else None
+    if body.health_id and not pat:
+        raise HTTPException(404, "No patient with that Health ID")
+    doc = {"id": new_id(), "hospital_id": h["id"], "patient_name": body.patient_name, "patient_user_id": pat["user_id"] if pat else None, "admission_id": body.admission_id, "items": items,
            "total": round(sum(i["amount"] for i in items), 2), "status": "unpaid", "created_at": now()}
     await db.bills.insert_one(dict(doc))
+    if pat:
+        pu = await db.users.find_one({"id": pat["user_id"]})
+        await notify(db, pu, "New hospital bill", f"{h['name']}: Rs {doc['total']:.0f}. Open Bills & Payments to pay by UPI QR.", "bill", ("app", "email", "sms"))
     doc.pop("_id", None)
     return doc
 
@@ -176,10 +184,49 @@ async def bills(user: dict = Depends(hospital_only)):
     return await get_db().bills.find({"hospital_id": h["id"]}, {"_id": 0}).sort("created_at", -1).limit(200).to_list(200)
 
 
+async def _my_bill(db, user, bid):
+    h = await _my_hospital(db, user)
+    b = await db.bills.find_one({"id": bid, "hospital_id": h["id"]}, {"_id": 0})
+    if not b:
+        raise HTTPException(404, "Bill not found")
+    return h, b
+
+
+@router.get("/me/bills/{bid}/pay")
+async def bill_pay_info(bid: str, user: dict = Depends(hospital_only)):
+    """Payment QR for a bill: a standard UPI deep link any UPI app can scan. Money goes straight to the hospital's UPI ID."""
+    from urllib.parse import quote
+    from ..config import settings
+    db = get_db()
+    h, b = await _my_bill(db, user, bid)
+    if b["status"] == "paid":
+        raise HTTPException(400, "Already paid")
+    vpa = h.get("upi_id")
+    demo = not vpa
+    if demo and not settings.DEV_MODE:
+        raise HTTPException(409, "Set your hospital UPI ID in the Hospital profile first")
+    vpa = vpa or "demo@medismart"  # not a real PSP handle: scanning it cannot move money
+    uri = (f"upi://pay?pa={quote(vpa)}&pn={quote(h['name'][:40])}&am={b['total']:.2f}&cu=INR"
+           f"&tn={quote('Bill ' + bid[:8])}&tr={bid[:20]}")
+    return {"upi_uri": uri, "amount": b["total"], "payee": h["name"], "vpa": vpa, "demo": demo}
+
+
+class PayIn(BaseModel):
+    method: str = Field(default="upi", pattern=r"^(upi|cash)$")
+    utr: str | None = Field(default=None, pattern=r"^\d{12}$")
+
+
 @router.patch("/me/bills/{bid}")
-async def pay_bill(bid: str, user: dict = Depends(hospital_only)):
-    h = await _my_hospital(get_db(), user)
-    await get_db().bills.update_one({"id": bid, "hospital_id": h["id"]}, {"$set": {"status": "paid", "paid_at": now()}})
+async def pay_bill(bid: str, body: PayIn, user: dict = Depends(hospital_only)):
+    """Mark a bill paid only with proof: the 12-digit UPI reference after the QR was scanned, or an explicit cash receipt."""
+    db = get_db()
+    h, b = await _my_bill(db, user, bid)
+    if b["status"] == "paid":
+        return {"paid": bid}
+    body.utr = body.utr or (b.get("utr") if body.method == "upi" else None)
+    if body.method == "upi" and not body.utr:
+        raise HTTPException(400, "Enter the 12-digit UPI reference (UTR) shown in your UPI app")
+    await db.bills.update_one({"id": bid}, {"$set": {"status": "paid", "paid_at": now(), "payment_method": body.method, "utr": body.utr}})
     return {"paid": bid}
 
 

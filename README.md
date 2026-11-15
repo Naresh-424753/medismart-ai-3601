@@ -164,3 +164,12 @@ Without a model the Image AI page uses classical OpenCV analysis (highlights reg
 3. It saves `backend/models/chest-xray.keras` and `chest-xray.json` (accuracy, and sensitivity/precision per class on a held-out split).
 4. The server loads `models/<kind>.keras` automatically **if TensorFlow is installed there**. TensorFlow does not fit on Render's free 512 MB instance; use a bigger host, or keep the model off the free tier.
 5. Public datasets are small and often biased (hospital markers, scanner type). Validate on your own hospital's images and have a doctor review mistakes before any patient sees a result. Keep the "screening support only" disclaimer.
+
+## Public hospital website and bills
+
+- `/hospital` (no login): departments and services, Find a Doctor (qualification, experience, OPD timing, photo, next free slots), health packages, insurance/TPA check, 24x7 emergency one-tap call, blog, gallery, feedback/complaint, contact with Google Maps, WhatsApp, visiting hours and parking. Hindi/English toggle.
+- Admin > **Hospital Website** (`/site-admin`) edits all of that content (stored in the database, nothing hard-coded) and decides which feedback is shown publicly. Complaints are never public.
+- Doctors add qualification, OPD timing and a photo link in Schedule & Profile.
+- Hospital creates a bill with the patient's Health ID, so the patient sees it under **Bills & Payments**, pays by UPI QR, and downloads a PDF receipt after the hospital confirms. Set the hospital UPI ID in Hospital profile.
+- Booking confirmation goes by app + email, and by SMS when Twilio is configured.
+- Payments are never marked paid automatically: UPI money goes straight to the hospital bank, so the hospital confirms it. A payment gateway (Razorpay etc.) is needed for automatic confirmation.
