@@ -35,6 +35,7 @@ import RxVerify from "./pages/RxVerify.jsx";
 import RecordSecurity from "./pages/RecordSecurity.jsx";
 import Contact, { ContactFab } from "./pages/Contact.jsx";
 import Site from "./pages/Site.jsx";
+import Install from "./pages/Install.jsx";
 import Bills from "./pages/Bills.jsx";
 import SiteAdmin from "./pages/SiteAdmin.jsx";
 
@@ -55,6 +56,7 @@ export default function App() {
       <Route path="/kiosk" element={<Kiosk />} />
       <Route path="/contact" element={<Contact />} />
       <Route path="/hospital" element={<Site />} />
+      <Route path="/install" element={<Install />} />
       <Route element={<Protected><Layout /></Protected>}>
         <Route index element={<Home />} />
         <Route path="risk" element={<Risk />} />

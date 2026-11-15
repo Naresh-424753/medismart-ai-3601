@@ -173,3 +173,8 @@ Without a model the Image AI page uses classical OpenCV analysis (highlights reg
 - Hospital creates a bill with the patient's Health ID, so the patient sees it under **Bills & Payments**, pays by UPI QR, and downloads a PDF receipt after the hospital confirms. Set the hospital UPI ID in Hospital profile.
 - Booking confirmation goes by app + email, and by SMS when Twilio is configured.
 - Payments are never marked paid automatically: UPI money goes straight to the hospital bank, so the hospital confirms it. A payment gateway (Razorpay etc.) is needed for automatic confirmation.
+
+## Mobile app (PWA)
+
+The frontend is an installable Progressive Web App: `/install` explains and offers one-tap install (Android Chrome, iPhone Safari "Add to Home Screen", desktop Chrome/Edge) and shows a QR code. `public/sw.js` caches only the app shell (never API data). It needs HTTPS (Vercel provides it).
+For an Android APK / Play Store build, wrap the deployed URL with PWABuilder (pwabuilder.com) or Bubblewrap (Trusted Web Activity).

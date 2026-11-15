@@ -166,6 +166,22 @@ async def full_report(rid: str, user: dict = Depends(patient_only)):
     }
 
 
+@router.get("/{rid}/pdf")
+async def report_pdf(rid: str, user: dict = Depends(patient_only)):
+    """Download the AI analysis of one of the patient's own reports as a PDF."""
+    from fastapi.responses import Response
+
+    from ..services.reportpdf import build_pdf
+    from .patients import age_from_dob
+    db = get_db()
+    d = await db.reports.find_one({"id": rid, "user_id": user["id"]}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Report not found")
+    prof = await db.patients.find_one({"user_id": user["id"]}, {"_id": 0}) or {}
+    data = build_pdf(d, {"name": user["name"], "age": age_from_dob(prof.get("dob")), "sex": prof.get("sex")})
+    return Response(data, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="report-analysis-{rid[:8]}.pdf"'})
+
+
 @router.get("/{rid}")
 async def get_report(rid: str, user: dict = Depends(patient_only)):
     d = await get_db().reports.find_one({"id": rid, "user_id": user["id"]}, {"_id": 0})

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CartesianGrid, Line, LineChart, ReferenceArea, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api } from "../api.js";
+import { api, download } from "../api.js";
 import { Alert, Badge, Card, Disclaimer, Field, useAsync } from "../components/ui.jsx";
 
 const fmt = (n) => (n >= 1000 ? n.toLocaleString("en-IN") : n);
@@ -34,6 +34,7 @@ export default function Reports() {
       setOut(r); setTrend(null); loadPast();
     });
   };
+  const pdf = (id) => run(async () => { await download(`/reports/${id}/pdf`, `report-analysis-${id.slice(0, 8)}.pdf`); });
   const showTrend = (key) => run(async () => setTrend(await api(`/reports/trend/${key}`)));
 
   return (
@@ -56,7 +57,7 @@ export default function Reports() {
       </Card>
 
       {out && (
-        <Card title={out.title} action={<Link className="btn-ghost py-1" to={`/reports/${out.id}`}>Open printable report</Link>}>
+        <Card title={out.title} action={<span className="flex gap-2"><button className="btn-primary py-1" onClick={() => pdf(out.id)}>Download PDF</button><Link className="btn-ghost py-1" to={`/reports/${out.id}`}>Open printable report</Link></span>}>
           <Alert tone={out.abnormal_count ? "warn" : "ok"}>{out.summary}</Alert>
           <div className="mt-3 overflow-x-auto">
             <table className="w-full text-left text-sm">
@@ -107,7 +108,7 @@ export default function Reports() {
       <Card title="Previous reports">
         {past.length === 0 && <p className="text-sm text-slate-500">None yet.</p>}
         <ul className="divide-y divide-slate-100 text-sm">
-          {past.map((p) => <li key={p.id} className="py-2"><b>{p.report_date}</b> · {p.title} {p.lab_verified && <Badge tone="good">lab verified</Badge>} <span className="text-slate-500">— {p.summary}</span> <Link className="text-brand-700 underline" to={`/reports/${p.id}`}>View / print</Link></li>)}
+          {past.map((p) => <li key={p.id} className="py-2"><b>{p.report_date}</b> · {p.title} {p.lab_verified && <Badge tone="good">lab verified</Badge>} <span className="text-slate-500">— {p.summary}</span> <Link className="text-brand-700 underline" to={`/reports/${p.id}`}>View / print</Link> · <button className="text-brand-700 underline" onClick={() => pdf(p.id)}>PDF</button></li>)}
         </ul>
       </Card>
     </>

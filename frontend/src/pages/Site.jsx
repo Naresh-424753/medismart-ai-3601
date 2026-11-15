@@ -48,6 +48,7 @@ export default function Site() {
           <nav className="flex flex-wrap items-center gap-3 text-sm">
             {[["doctors", t.doctors], ["departments", t.departments], ["packages", t.packages], ["emergency", t.emergency], ["contact", t.contact]].map(([id, l]) => <a key={id} href={`#${id}`} className="hover:text-brand-700">{l}</a>)}
             <button className="rounded border px-2 py-0.5 text-xs" onClick={() => setL(lang === "en" ? "hi" : "en")}>{t.lang}</button>
+            <Link className="rounded border px-2 py-0.5 text-xs" to="/install">📲 App</Link>
             <Link className="btn-primary py-1" to={user ? "/" : "/login"}>{user ? t.portal : t.login}</Link>
           </nav>
         </div>
