@@ -14,6 +14,7 @@ export default function ImageAI() {
   const [res, setRes] = useState(null);
   const [models, setModels] = useState([]);
   const [hist, setHist] = useState([]);
+  const [open, setOpen] = useState(null); // { id, report, task, created }
   const { busy, error, run } = useAsync();
   const load = () => { api("/ai/image-models").then(setModels).catch(() => {}); api("/ai/image-history").then(setHist).catch(() => {}); };
   useEffect(load, []);
@@ -29,13 +30,15 @@ export default function ImageAI() {
       load();
     });
   };
-  const download = () => {
-    const blob = new Blob([res.report], { type: "text/plain" });
+  const save = (text, name) => {
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `image-report-${res.task}.txt`;
+    a.href = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+    a.download = name;
     a.click();
   };
+  const download = () => save(res.report, `image-report-${res.task}.txt`);
+  const view = (h) => (open?.id === h.id ? setOpen(null) : run(async () => { const r = await api(`/ai/image-report/${h.id}`); setOpen({ id: h.id, report: r.report, task: r.task, created: r.created }); }));
+  const label = (k) => GROUPS.find(([g]) => g === k)?.[1] || k.replace(/_/g, " ");
 
   return (
     <>
@@ -71,9 +74,23 @@ export default function ImageAI() {
         </Card>
       )}
       <Card title="Previous analyses">
-        {hist.length === 0 ? <Empty>No images analysed yet.</Empty> : (
+        {hist.length === 0 ? <Empty>No images analysed yet. Your results and reports are saved here after each analysis.</Empty> : (
           <ul className="divide-y divide-slate-100 text-sm">
-            {hist.map((h) => <li key={h.id} className="py-2"><span className="font-medium">{h.kind.replace(/_/g, " ")}</span> <span className="text-slate-500">· {new Date(h.ts).toLocaleString()} · {h.result?.finding || h.result?.message || ""}</span></li>)}
+            {hist.map((h) => (
+              <li key={h.id} className="py-2">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <span><span className="font-medium">{label(h.kind)}</span> <Badge tone={toneFor(h.result?.level)}>{h.result?.level || h.result?.mode || "result"}</Badge>
+                    <br /><span className="text-xs text-slate-500">{new Date(h.ts).toLocaleString()} · {h.result?.finding || h.result?.message || ""}</span></span>
+                  <button className="btn-ghost py-1" onClick={() => view(h)}>{open?.id === h.id ? "Hide report" : "View report"}</button>
+                </div>
+                {open?.id === h.id && (
+                  <div className="mt-2 rounded-lg bg-slate-50 p-3">
+                    <pre className="whitespace-pre-wrap text-xs text-slate-700">{open.report}</pre>
+                    <button className="btn-ghost mt-2 py-1" onClick={() => save(open.report, `image-report-${open.task}-${open.created.slice(0, 10)}.txt`)}>Download report</button>
+                  </div>
+                )}
+              </li>
+            ))}
           </ul>
         )}
       </Card>

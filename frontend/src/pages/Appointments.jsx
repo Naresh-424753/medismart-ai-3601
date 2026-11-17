@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import PhotoUpload from "../components/PhotoUpload.jsx";
 import { api } from "../api.js";
 import { useAuth } from "../auth.jsx";
 import { Alert, Badge, Card, Empty, Field, isoToday, useAsync } from "../components/ui.jsx";
@@ -144,7 +145,7 @@ function DoctorSide() {
   const save = (e) => {
     e.preventDefault();
     run(async () => {
-      const body = { specialization: p.specialization, experience_years: +p.experience_years || 0, fee: +p.fee || 0, bio: p.bio || "", qualification: p.qualification || null, opd_timing: p.opd_timing || null, photo_url: p.photo_url || null, hospital: p.hospital || "", city: p.city || "", availability: { days, slots: slots.split(",").map((s) => s.trim()).filter(Boolean) } };
+      const body = { specialization: p.specialization, experience_years: +p.experience_years || 0, fee: +p.fee || 0, bio: p.bio || "", qualification: p.qualification || null, opd_timing: p.opd_timing || null, photo_url: p.photo_url ?? null, hospital: p.hospital || "", city: p.city || "", availability: { days, slots: slots.split(",").map((s) => s.trim()).filter(Boolean) } };
       setP(await api("/doctors/me", { method: "PUT", body })); setMsg("Profile saved.");
     });
   };
@@ -168,7 +169,7 @@ function DoctorSide() {
             <Field label="Bio"><input className="input" value={p.bio || ""} onChange={(e) => setP({ ...p, bio: e.target.value })} /></Field>
             <Field label="Qualification (e.g. MBBS, MD)"><input className="input" value={p.qualification || ""} onChange={(e) => setP({ ...p, qualification: e.target.value })} /></Field>
             <Field label="OPD timing (e.g. Mon-Fri 10-1)"><input className="input" value={p.opd_timing || ""} onChange={(e) => setP({ ...p, opd_timing: e.target.value })} /></Field>
-            <Field label="Photo link (https)"><input className="input" value={p.photo_url || ""} onChange={(e) => setP({ ...p, photo_url: e.target.value.trim() })} /></Field>
+            <Field label="Profile photo"><PhotoUpload value={p.photo_url} onDone={(u) => setP({ ...p, photo_url: u })} /></Field>
             <div className="md:col-span-3">
               <span className="label">Working days</span>
               <div className="flex flex-wrap gap-3 text-sm">{DAYS.map((d, i) => <label key={d} className="flex items-center gap-1"><input type="checkbox" checked={days.includes(i)} onChange={(e) => setDays(e.target.checked ? [...days, i].sort() : days.filter((x) => x !== i))} />{d}</label>)}</div>

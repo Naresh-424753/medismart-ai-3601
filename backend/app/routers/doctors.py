@@ -19,7 +19,7 @@ class DoctorIn(BaseModel):
     bio: str | None = None
     qualification: str | None = Field(default=None, max_length=150)
     opd_timing: str | None = Field(default=None, max_length=150)
-    photo_url: str | None = Field(default=None, pattern=r"^https://\S+$", max_length=500)
+    photo_url: str | None = Field(default=None, pattern=r"^(https://\S+)?$", max_length=500)
     hospital: str | None = None
     city: str | None = None
     availability: dict | None = None  # {"days":[0..6], "slots":["10:00",...]}

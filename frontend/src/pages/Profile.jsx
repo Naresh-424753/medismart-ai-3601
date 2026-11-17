@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { downloadOfflineCard } from "../components/offlineCard.js";
+import { downloadHealthCard, printHealthCard } from "../components/healthCard.js";
+import PhotoUpload from "../components/PhotoUpload.jsx";
 import { api, tokenStore } from "../api.js";
 import { useAuth } from "../auth.jsx";
 import { Alert, Badge, Card, Empty, Field, useAsync } from "../components/ui.jsx";
@@ -47,12 +49,13 @@ function Overview({ p }) {
     <>
       <div className="grid gap-4 md:grid-cols-3">
         <div className="rounded-xl bg-gradient-to-r from-brand-600 to-brand-900 p-5 text-white shadow md:col-span-2">
+          {p.photo_url && <img src={p.photo_url} alt="" className="float-right h-20 w-20 rounded-xl border-2 border-white/60 object-cover" referrerPolicy="no-referrer" />}
           <p className="text-xs uppercase tracking-wider opacity-80">Digital Health ID</p>
           <p className="mt-1 font-mono text-2xl tracking-wider">{p.health_id}</p>
           <p className="mt-3 text-sm">{p.name}{p.age != null && ` · ${p.age} yrs`} · Blood group <b>{p.blood_group || "not set"}</b></p>
           <p className="text-sm">Allergies: <b>{(p.allergies || []).map((a) => a.name).join(", ") || "none recorded"}</b></p>
         </div>
-        <Card title="Emergency QR card"><div className="flex flex-col items-center gap-2"><QRCodeSVG value={cardUrl} size={128} /><p className="text-center text-xs text-slate-500">Scan to show blood group, allergies and contacts without login. Print it or save it as your phone lock-screen.</p><a className="text-xs text-brand-700 underline" href={cardUrl} target="_blank" rel="noreferrer">Open card</a><button className="btn-ghost text-xs" onClick={() => downloadOfflineCard(p)}>Download offline card</button></div></Card>
+        <Card title="Emergency QR card"><div className="flex flex-col items-center gap-2"><QRCodeSVG value={cardUrl} size={128} /><p className="text-center text-xs text-slate-500">Scan to show blood group, allergies and contacts without login. Print it or save it as your phone lock-screen.</p><a className="text-xs text-brand-700 underline" href={cardUrl} target="_blank" rel="noreferrer">Open card</a><div className="flex flex-wrap justify-center gap-2"><button className="btn-primary py-1 text-xs" onClick={() => downloadHealthCard(p, cardUrl)}>Download card (PNG)</button><button className="btn-ghost py-1 text-xs" onClick={() => printHealthCard(p, cardUrl)}>Print</button><button className="btn-ghost py-1 text-xs" onClick={() => downloadOfflineCard(p)}>Offline page</button></div>{!p.photo_url && <p className="text-center text-xs text-amber-700">Add your photo in the Profile tab so the card shows your face.</p>}</div></Card>
       </div>
       {!ready && <Alert tone="warn">Complete your emergency profile: add your blood group and at least one emergency contact.</Alert>}
       <Card title="At a glance"><p className="text-sm text-slate-700">Height {p.height_cm || "—"} cm · Weight {p.weight_kg || "—"} kg · {(p.diseases || []).length} condition(s) · {(p.vaccinations || []).length} vaccination(s) · {(p.surgeries || []).length} surgery record(s)</p></Card>
@@ -76,6 +79,11 @@ function BasicInfo({ p, onSaved }) {
   };
   return (
     <Card title="Personal details">
+      <div className="mb-4 border-b border-slate-100 pb-4">
+        <p className="label">Profile photo (shown on your emergency card)</p>
+        <PhotoUpload value={p.photo_url} label={p.photo_url ? "Change photo" : "Upload photo"} onDone={(u) => run(async () => { const r = await api("/patients/me", { method: "PUT", body: { photo_url: u } }); onSaved(r); setMsg(u ? "Photo saved." : "Photo removed."); })} />
+        <p className="mt-1 text-xs text-slate-500">Anyone who scans your emergency QR can see this photo, so use a clear face photo you are happy to show.</p>
+      </div>
       <form onSubmit={save} className="grid gap-3 md:grid-cols-3">
         <Field label="Mobile"><input className="input" value={f.phone} onChange={set("phone")} /></Field>
         <Field label="Date of birth"><input className="input" type="date" value={f.dob} onChange={set("dob")} /></Field>

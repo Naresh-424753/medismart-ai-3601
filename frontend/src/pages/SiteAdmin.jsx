@@ -1,6 +1,7 @@
 // Admin: edit the public hospital website (info, packages, insurers, blog, gallery) and moderate feedback.
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
+import PhotoUpload from "../components/PhotoUpload.jsx";
 import { Alert, Badge, Card, Field, textToList, useAsync } from "../components/ui.jsx";
 
 const INFO = [["name", "Hospital name"], ["tagline", "Tagline"], ["address", "Address"], ["phone", "Phone"], ["email", "Email"], ["whatsapp", "WhatsApp number (with country code)"], ["emergency_phone", "Emergency helpline"], ["ambulance_phone", "Ambulance number"],
@@ -39,7 +40,7 @@ export default function SiteAdmin() {
         <Card title="Health checkup packages (one per line: name | price | item, item)"><textarea className="input min-h-[90px]" value={f.packages} onChange={(e) => setF({ ...f, packages: e.target.value })} /></Card>
         <Card title="Accepted insurance / TPA (comma separated)"><textarea className="input" value={f.insurers} onChange={(e) => setF({ ...f, insurers: e.target.value })} /></Card>
         <Card title="Health blog (one post per line: title | text)"><textarea className="input min-h-[90px]" value={f.blog} onChange={(e) => setF({ ...f, blog: e.target.value })} /></Card>
-        <Card title="Gallery (one per line: https image link | caption)"><textarea className="input min-h-[70px]" value={f.gallery} onChange={(e) => setF({ ...f, gallery: e.target.value })} /></Card>
+        <Card title="Gallery (one per line: https image link | caption)"><div className="mb-2"><PhotoUpload label="Upload gallery photo" onDone={(u) => u && setF({ ...f, gallery: (f.gallery ? f.gallery + "\n" : "") + u + " | " })} /></div><textarea className="input min-h-[70px]" value={f.gallery} onChange={(e) => setF({ ...f, gallery: e.target.value })} /></Card>
         <button className="btn-primary" disabled={busy}>Save website</button>
       </form>
       <Card title="Feedback & complaints">

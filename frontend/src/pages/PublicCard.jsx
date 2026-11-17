@@ -15,7 +15,7 @@ export default function PublicCard() {
   if (!c) return <p className="p-8 text-center text-slate-500">Loading…</p>;
   return (
     <div className="mx-auto max-w-md space-y-3 p-4">
-      <div className="rounded-xl bg-red-600 p-4 text-white"><p className="text-xs uppercase tracking-wide">Emergency medical card</p><p className="text-2xl font-bold">{c.name}</p><p className="text-sm">Health ID {c.health_id}</p></div>
+      <div className="rounded-xl bg-red-600 p-4 text-white"><p className="text-xs uppercase tracking-wide">Emergency medical card</p><div className="flex items-center gap-3">{c.photo_url && <img src={c.photo_url} alt="" className="h-20 w-20 rounded-xl border-2 border-white/70 object-cover" referrerPolicy="no-referrer" />}<p className="text-2xl font-bold">{c.name}</p></div><p className="text-sm">Health ID {c.health_id}</p></div>
       <div className="card text-sm">
         <p><b>Blood group:</b> <span className="text-xl font-bold text-red-700">{c.blood_group || "unknown"}</span></p>
         <p><b>Sex / DOB:</b> {c.sex || "—"} / {c.dob || "—"}</p>

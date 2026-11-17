@@ -26,25 +26,28 @@ function Shell({ title, children }) {
   );
 }
 
+// only same-site paths are accepted as a post-login destination (no open redirect)
+const nextPath = () => { const n = new URLSearchParams(window.location.search).get("next") || ""; return /^\/(?!\/)[\w\-/.]*$/.test(n) ? n : "/"; };
+
 export function Login() {
   const { user, login, verifyLoginOtp } = useAuth();
   const nav = useNavigate();
   const [f, setF] = useState({ email: "", password: "", otp: "" });
   const [needOtp, setNeedOtp] = useState(false);
   const { busy, error, run } = useAsync();
-  if (user) return <Navigate to="/" replace />;
+  if (user) return <Navigate to={nextPath()} replace />;
 
   const submit = (e) => {
     e.preventDefault();
     run(async () => {
       if (needOtp) {
         await verifyLoginOtp(f.email, f.otp);
-        return nav("/");
+        return nav(nextPath());
       }
       const r = await login(f.email, f.password);
       if (r.requires_otp) {
         setNeedOtp(true);
-      } else nav("/");
+      } else nav(nextPath());
     });
   };
   return (

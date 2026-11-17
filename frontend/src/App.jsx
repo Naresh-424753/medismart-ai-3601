@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useAuth } from "./auth.jsx";
 import Layout from "./components/Layout.jsx";
 import { ForgotPassword, Login, Register } from "./pages/Auth.jsx";
@@ -36,13 +36,17 @@ import RecordSecurity from "./pages/RecordSecurity.jsx";
 import Contact, { ContactFab } from "./pages/Contact.jsx";
 import Site from "./pages/Site.jsx";
 import Install from "./pages/Install.jsx";
+import Passport from "./pages/Passport.jsx";
+import PassportView from "./pages/PassportView.jsx";
+import PassportScan from "./pages/PassportScan.jsx";
 import Bills from "./pages/Bills.jsx";
 import SiteAdmin from "./pages/SiteAdmin.jsx";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
+  const loc = useLocation();
   if (loading) return <p className="p-8 text-center text-slate-500">Loading…</p>;
-  return user ? children : <Navigate to="/login" replace />;
+  return user ? children : <Navigate to={`/login?next=${encodeURIComponent(loc.pathname)}`} replace />;
 }
 
 export default function App() {
@@ -88,6 +92,9 @@ export default function App() {
         <Route path="rx-verify" element={<RxVerify />} />
         <Route path="security" element={<RecordSecurity />} />
         <Route path="bills" element={<Bills />} />
+        <Route path="passport" element={<Passport />} />
+        <Route path="passport/:token" element={<PassportView />} />
+        <Route path="passport-scan" element={<PassportScan />} />
         <Route path="site-admin" element={<SiteAdmin />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 from .config import settings
 from .db import check_connection, ensure_indexes, get_db, use_mock
-from .routers import admin, ai, assistant, contact, board, analytics, auth, blood, chat, doctors, emergency, extras, federated, hospital_ops, hospitals, labs, ews, ledger, medicines, messaging, patients, reports, rx_scan, site, telemedicine, vitals, voice, wearables, wellness
+from .routers import admin, ai, assistant, contact, board, analytics, auth, blood, chat, doctors, emergency, extras, federated, hospital_ops, hospitals, labs, ews, ledger, medicines, messaging, patients, reports, rx_scan, site, media, passport, telemedicine, vitals, voice, wearables, wellness
 from .scheduler import run_forever
 from .seed import seed
 
@@ -72,14 +72,14 @@ async def security_middleware(request: Request, call_next):
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "DENY"
     resp.headers["Referrer-Policy"] = "no-referrer"
-    resp.headers["Cache-Control"] = "no-store"
+    resp.headers.setdefault("Cache-Control", "no-store")
     return resp
 
 
 for r in (auth.router, patients.router, ai.router, reports.router, chat.router, medicines.router, doctors.router, vitals.router, ews.router, federated.router, emergency.router, emergency.public,
           hospitals.router, labs.router, blood.router, wellness.router, analytics.router, admin.router, admin.family,
           messaging.router, hospital_ops.router, extras.router, extras.kiosk,
-          ledger.router, rx_scan.router, wearables.router, telemedicine.router, voice.router, board.router, contact.router, assistant.router, site.router):
+          ledger.router, rx_scan.router, wearables.router, telemedicine.router, voice.router, board.router, contact.router, assistant.router, site.router, media.router, passport.router):
     app.include_router(r)
 
 

@@ -125,7 +125,7 @@ Patient orders medicines -> price comes from the pharmacy's stock list (or the p
 
 ## Honest limitations (read before presenting)
 * **Risk models are DEMO models** trained on synthetic data (`backend/app/services/ml.py`). Swap in real datasets (Pima, UCI heart, CKD, Framingham) for real use.
-* **Image analysis** (Image AI page) uses classical OpenCV analysis that highlights regions for a doctor to review, unless you add trained ONNX weights (`ml/train_image_classifier.py`). Fracture, tumor-type and pneumonia *classification* need trained models and say so otherwise. Outputs are screening support, not diagnoses.
+* **Image analysis** (Image AI page) uses classical OpenCV analysis that highlights regions for a doctor to review, unless you add trained ONNX weights (`ml/train_image_models.py`). Fracture, tumor-type and pneumonia *classification* need trained models and say so otherwise. Outputs are screening support, not diagnoses.
 * **New risk models** (blood pressure, thyroid, anemia, cancer-lifestyle) are demo models on synthetic data like the others; the cancer score is a lifestyle/history screen, not a detector.
 * **Report explainer** matches known report phrases only; it does not read images or ECG traces.
 * Not built: per-user fine-grained permission editor (access is by role)/auto-reconciliation (video calls: WebRTC page, Jitsi link kept as backup).
@@ -156,14 +156,26 @@ Clinical AI additions (EWS, voice STT, order flow, federated learning, board rev
 - **Video consultation:** WebRTC audio/video with a FastAPI WebSocket signalling server (`/telemedicine/ws/{appointment}`), not Socket.IO. Add `TURN_URL`, `TURN_USERNAME`, `TURN_CREDENTIAL` for strict networks.
 - **Super admin:** *Details* on any account (identity, status, role profile, data counts, logins, activity; never passwords/OTPs/medical content, each view audited), *Create an admin account*, *Remove admin*. Plain admins do not get these.
 
-## Adding a real Image AI model (optional)
-Without a model the Image AI page uses classical OpenCV analysis (highlights regions only). To use a trained classifier:
-1. Get a labelled dataset, one folder per label with exactly the label names in `backend/app/services/imaging.py` (e.g. `normal`, `pneumonia`, `tuberculosis`). Public starting points: Kaggle "Chest X-Ray Images (Pneumonia)", "Brain Tumor MRI Dataset", ISIC (skin), APTOS 2019 (retina). Check each dataset's licence.
-2. `pip install tensorflow pillow` on your own PC (a GPU or Google Colab makes it much faster), then from `backend/`:
-   `python -m ml.train_image_classifier chest-xray --data D:\datasets\chest_xray --epochs 8`
-3. It saves `backend/models/chest-xray.keras` and `chest-xray.json` (accuracy, and sensitivity/precision per class on a held-out split).
-4. The server loads `models/<kind>.keras` automatically **if TensorFlow is installed there**. TensorFlow does not fit on Render's free 512 MB instance; use a bigger host, or keep the model off the free tier.
-5. Public datasets are small and often biased (hospital markers, scanner type). Validate on your own hospital's images and have a doctor review mistakes before any patient sees a result. Keep the "screening support only" disclaimer.
+## Trained Image AI models (bone fracture, brain tumor type, pneumonia)
+
+The Image AI page already has these three classifiers. Until a model file exists the page says "needs a trained model" (it never fakes a result). To train them, on your own PC or Google Colab (GPU recommended), from the `backend/` folder:
+
+```
+pip install torch torchvision onnx onnxruntime scikit-learn pillow numpy
+python -m ml.train_image_models --task pneumonia_classification --data D:\datasets\chest_xray        --epochs 8
+python -m ml.train_image_models --task tumor_classification     --data D:\datasets\brain_tumor_mri   --epochs 10
+python -m ml.train_image_models --task fracture                 --data D:\datasets\bone_fracture     --epochs 10
+```
+
+Each run writes `backend/ml/models/images/<task>.onnx` and `<task>.json` (labels, accuracy, sensitivity/specificity per class, confusion matrix, AUC), checks that the ONNX file gives the same answers as the trained network, and stops if it does not. Commit those two files and push: `onnxruntime` is in `requirements.txt` (about 15 MB, fits Render free tier; TensorFlow does not), so the server uses them automatically and the page shows `mode: cnn`.
+
+Datasets (check each licence and terms first; Kaggle needs a free account):
+- **Pneumonia:** Kaggle "Chest X-Ray Images (Pneumonia)" (folders `NORMAL`, `PNEUMONIA`).
+- **Brain tumor:** Kaggle "Brain Tumor MRI Dataset" (folders `glioma`, `meningioma`, `notumor`, `pituitary`).
+- **Fracture:** a Kaggle bone-fracture classification set with `fractured` / `not fractured` folders, or Stanford MURA (registration; normal vs abnormal radiographs).
+Folders may be `train/val/test/<class>` (used as given) or just `<class>` (split 70/15/15). Class folder names are matched with aliases listed in `ml/train_image_models.py`.
+
+Be honest about the results: public datasets are small, come from few hospitals and contain shortcuts (hospital markers, scanner type) and several images per patient, so the printed held-out numbers are optimistic. Validate on your own hospital's images, have a radiologist review mistakes, and keep the "screening support only, not a diagnosis" wording. Pre-trained weights are NOT shipped: none can be trained without the datasets.
 
 ## Public hospital website and bills
 
@@ -178,3 +190,18 @@ Without a model the Image AI page uses classical OpenCV analysis (highlights reg
 
 The frontend is an installable Progressive Web App: `/install` explains and offers one-tap install (Android Chrome, iPhone Safari "Add to Home Screen", desktop Chrome/Edge) and shows a QR code. `public/sw.js` caches only the app shell (never API data). It needs HTTPS (Vercel provides it).
 For an Android APK / Play Store build, wrap the deployed URL with PWABuilder (pwabuilder.com) or Bubblewrap (Trusted Web Activity).
+
+## Photo upload
+
+Doctors upload their profile photo (Schedule & Profile) and admins upload gallery photos (Hospital Website) straight from the phone or computer: `POST /media/upload`. Pictures are verified with Pillow (SVG and non-images are rejected), EXIF/GPS is removed, they are resized to max 900 px and stored in MongoDB (Render's disk is wiped on deploy), and served publicly at `GET /media/{id}`. Only upload pictures that are meant to be public. Set `PUBLIC_API_URL` to your Render backend URL so links are correct.
+
+## Smart Health Passport (QR medical ID)
+
+Patient > **Health Passport** creates a QR (valid 24 h to 1 year, can be regenerated or switched off). A verified doctor / hospital / nurse account scans it (phone camera or Doctor > **Scan Passport**), logs in, and sees blood group, allergies, conditions, surgeries, vaccinations, current medicines, recent prescriptions, latest vitals and abnormal lab values. A nurse sees less (no lab reports).
+Security: the QR holds only a random 192-bit token; the server stores its SHA-256 hash and an encrypted copy (Fernet, key derived from `JWT_SECRET`, so rotating JWT_SECRET invalidates existing QR codes). Every view is audit-logged, written to the patient's ledger, shown in the patient's "Who opened my passport" list and notified. The public emergency card (My Health) remains separate and shows only blood group, allergies and contacts.
+
+## Profile photo, designed emergency card, Image AI history
+
+- My health > Profile: patients upload a profile photo (`/media/upload`, EXIF removed). It is shown on the Health ID, the public emergency card page and the Health Passport view. Anyone who scans the emergency QR can see it.
+- My health > Overview: **Download card (PNG)** draws a credit-card sized front + back (photo, name, Health ID, blood group, allergies, contacts, conditions, QR, 112/108), **Print** prints it at card size, **Offline page** keeps the old self-contained HTML.
+- Image AI > **Previous analyses**: every analysis is saved; **View report** shows the stored text report and **Download report** saves it.

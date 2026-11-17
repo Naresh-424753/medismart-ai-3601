@@ -163,6 +163,6 @@ async def emergency_card(qr_token: str):
         raise HTTPException(404, "Card not found")
     u = await db.users.find_one({"id": p["user_id"]})
     await audit(db, None, "emergency_card_view", p["health_id"])
-    return {"name": u["name"], "health_id": p["health_id"], "blood_group": p.get("blood_group"), "sex": p.get("sex"), "dob": p.get("dob"),
+    return {"name": u["name"], "photo_url": p.get("photo_url") or None, "health_id": p["health_id"], "blood_group": p.get("blood_group"), "sex": p.get("sex"), "dob": p.get("dob"),
             "allergies": [a["name"] for a in p.get("allergies", [])], "conditions": [d["name"] for d in p.get("diseases", [])],
             "emergency_contacts": [{"name": c["name"], "relation": c.get("relation"), "phone": c.get("phone")} for c in p.get("emergency_contacts", [])]}

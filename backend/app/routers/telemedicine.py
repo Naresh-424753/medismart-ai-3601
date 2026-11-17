@@ -46,7 +46,7 @@ rooms = Rooms()
 def ice_servers() -> list[dict]:
     out = [{"urls": settings.STUN_URLS}] if settings.STUN_URLS else []
     if settings.TURN_URL:
-        out.append({"urls": [settings.TURN_URL], "username": settings.TURN_USERNAME, "credential": settings.TURN_CREDENTIAL})
+        out.append({"urls": [u.strip() for u in settings.TURN_URL.split(",") if u.strip()], "username": settings.TURN_USERNAME, "credential": settings.TURN_CREDENTIAL})
     return out
 
 

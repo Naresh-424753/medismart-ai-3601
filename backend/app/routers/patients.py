@@ -38,6 +38,7 @@ class ProfileIn(BaseModel):
     address: str | None = None
     city: str | None = None
     phone: str | None = None
+    photo_url: str | None = Field(default=None, pattern=r"^(https://\S+)?$", max_length=500)
 
 
 class RecordIn(BaseModel):

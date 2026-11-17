@@ -5,7 +5,7 @@ HONESTY NOTE (also shown to users in every response):
   regions worth a clinician's attention: opacity patterns, left/right asymmetry, ABCD skin features, dark/bright
   retinal spots, lens haze. They are NOT diagnoses and are far less accurate than a trained CNN.
 * If an ONNX model exists at ml/models/images/<task>.onnx (+ <task>.json with {"labels": [...]}) and onnxruntime is
-  installed, that model is used instead and the response says mode="cnn". See ml/train_image_classifier.py to train one.
+  installed, that model is used instead and the response says mode="cnn". See ml/train_image_models.py to train one.
 """
 from __future__ import annotations
 
@@ -243,7 +243,7 @@ def analyze(data: bytes, task: str) -> dict:
         overlay = img
     elif task in CNN_ONLY_TASKS:
         return {"task": task, "mode": "unavailable", "available": False, "disclaimer": DISCLAIMER,
-                "message": f"'{task}' needs a trained model. Train one with ml/train_image_classifier.py and place {task}.onnx + {task}.json in ml/models/images/."}
+                "message": f"'{task}' needs a trained model. Train one with ml/train_image_models.py and place {task}.onnx + {task}.json in ml/models/images/."}
     else:
         r = HEURISTICS[task](img)
         overlay = r.pop("overlay")

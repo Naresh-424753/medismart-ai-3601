@@ -14,11 +14,11 @@ scikit-learn>=1.4
 pytesseract>=0.3.10          # needs the tesseract-ocr system package for image OCR
 Pillow>=10
 opencv-python-headless>=4.9   # medical-image screening
-# onnxruntime>=1.17           # optional: run trained ONNX image models
+onnxruntime>=1.17            # runs the trained Image AI models (.onnx); small, fits Render free tier
 pypdf>=4
 reportlab>=4                 # prescription PDFs
 pytest>=8
 pytest-asyncio>=0.23
-# Optional, for medical-image models (see ml/train_image_classifier.py):
+# Optional, for medical-image models (see ml/train_image_models.py):
 # tensorflow>=2.16
 google-cloud-storage>=2.16   # only needed when GCS_BUCKET is set
