@@ -3,6 +3,7 @@ import { useAuth } from "../auth.jsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api.js";
 import Icon from "./Icon.jsx";
+import PasskeyPrompt from "./PasskeyPrompt.jsx";
 import VoiceCommander from "./VoiceCommander.jsx";
 import { saveLang, savedLang, useVoiceLangs } from "./voice.js";
 
@@ -116,6 +117,7 @@ export default function Layout() {
           </div>
         </header>
         <main className="mx-auto w-full max-w-[1400px] flex-1 space-y-4 p-4 md:p-6">
+          <PasskeyPrompt />
           <Outlet />
         </main>
         <footer className="flex items-center justify-between border-t border-slate-200 bg-white px-6 py-2 text-xs text-slate-500"><span className="flex items-center gap-1"><Icon name="shield" className="h-4 w-4 text-brand-600" />Your data is secure with us</span><span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" />System online</span></footer>
