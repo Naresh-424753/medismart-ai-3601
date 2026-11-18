@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import time
+from datetime import datetime, timedelta, timezone
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 
@@ -9,9 +10,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .config import settings
+from .config import production_problems, settings
+from .deps import client_ip
 from .db import check_connection, ensure_indexes, get_db, use_mock
-from .routers import admin, ai, assistant, contact, board, analytics, auth, blood, chat, doctors, emergency, extras, federated, hospital_ops, hospitals, labs, ews, ledger, medicines, messaging, patients, reports, rx_scan, site, media, passport, telemedicine, vitals, voice, wearables, wellness
+from .routers import admin, ai, assistant, contact, board, analytics, auth, blood, chat, doctors, emergency, extras, federated, hospital_ops, hospitals, labs, ews, ledger, medicines, messaging, patients, reports, rx_scan, site, media, passport, passkeys, privacy, telemedicine, vitals, voice, wearables, wellness
 from .scheduler import run_forever
 from .seed import seed
 
@@ -32,6 +34,11 @@ async def lifespan(app: FastAPI):
         log.error("Start MongoDB and restart the backend to use the real database.")
         log.error("=" * 70)
         db = use_mock()
+    probs = production_problems()
+    if probs and settings.REAL_PATIENT_DATA:
+        raise RuntimeError("REAL_PATIENT_DATA=1 but the configuration is not safe for patient data:\n - " + "\n - ".join(probs))
+    for pr in probs:
+        log.warning("Not production-safe: %s (set REAL_PATIENT_DATA=1 to make this a hard error)", pr)
     await ensure_indexes(db)
     await seed(db)
     if settings.DEV_MODE:
@@ -45,33 +52,48 @@ async def lifespan(app: FastAPI):
     task.cancel()
 
 
+# API docs / schema are only exposed in DEV_MODE: in production they would hand attackers a map of every endpoint
 app = FastAPI(title=settings.APP_NAME, version="1.0.0", lifespan=lifespan,
+              docs_url="/docs" if settings.DEV_MODE else None, redoc_url=None, openapi_url="/openapi.json" if settings.DEV_MODE else None,
               description="MediSmart AI 360 - Diagnose Early, Treat Precisely, Heal Faster. Demo software, not a medical device.")
 
 app.add_middleware(CORSMiddleware, allow_origins=settings.CORS_ORIGINS, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 _hits: dict[str, deque] = defaultdict(deque)
-RATE_LIMITS = {"/auth/login": (10, 60), "/auth/register": (10, 300), "/auth/verify-otp": (15, 300), "/auth/forgot-password": (5, 300), "/auth/resend-otp": (5, 300),
+RATE_LIMITS = {"/auth/login": (10, 60), "/auth/passkey/login/options": (30, 60), "/auth/passkey/login/verify": (15, 60), "/auth/register": (10, 300), "/auth/verify-otp": (15, 300), "/auth/forgot-password": (5, 300), "/auth/resend-otp": (5, 300),
                "/contact": (5, 300), "/site/feedback": (5, 300), "/voice/transcribe": (20, 60), "/voice/symptom-check": (20, 60), "/kiosk/symptom-check": (30, 60), "/kiosk/bmi": (30, 60)}
 
 
 @app.middleware("http")
 async def security_middleware(request: Request, call_next):
+    ip = client_ip(request)
+    # coarse per-IP backstop for every request (in memory), then the strict per-endpoint limits (in MongoDB: survive restarts, shared by instances)
+    g = _hits[f"*|{ip}"]
+    t = time.time()
+    while g and g[0] < t - 60:
+        g.popleft()
+    if len(g) >= 600:
+        return JSONResponse({"detail": "Too many requests. Please slow down."}, status_code=429)
+    g.append(t)
     limit = RATE_LIMITS.get(request.url.path)
     if limit and request.method == "POST":
-        ip = request.client.host if request.client else "?"
-        q = _hits[f"{request.url.path}|{ip}"]
         n, window = limit
-        t = time.time()
-        while q and q[0] < t - window:
-            q.popleft()
-        if len(q) >= n:
+        db = get_db()
+        key = f"{request.url.path}|{ip}"
+        since = datetime.now(timezone.utc) - timedelta(seconds=window)
+        if await db.rate_hits.count_documents({"key": key, "at": {"$gte": since}}) >= n:
             return JSONResponse({"detail": "Too many requests. Please wait and try again."}, status_code=429)
-        q.append(t)
+        await db.rate_hits.insert_one({"key": key, "at": datetime.now(timezone.utc)})
     resp = await call_next(request)
     resp.headers["X-Content-Type-Options"] = "nosniff"
     resp.headers["X-Frame-Options"] = "DENY"
     resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["Permissions-Policy"] = "camera=(), microphone=(self), geolocation=(), payment=()"
+    resp.headers["Cross-Origin-Resource-Policy"] = "cross-origin"  # /media images are shown on the Vercel site
+    if request.url.path not in ("/docs", "/openapi.json"):
+        resp.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+    if not settings.DEV_MODE:
+        resp.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
     resp.headers.setdefault("Cache-Control", "no-store")
     return resp
 
@@ -79,7 +101,7 @@ async def security_middleware(request: Request, call_next):
 for r in (auth.router, patients.router, ai.router, reports.router, chat.router, medicines.router, doctors.router, vitals.router, ews.router, federated.router, emergency.router, emergency.public,
           hospitals.router, labs.router, blood.router, wellness.router, analytics.router, admin.router, admin.family,
           messaging.router, hospital_ops.router, extras.router, extras.kiosk,
-          ledger.router, rx_scan.router, wearables.router, telemedicine.router, voice.router, board.router, contact.router, assistant.router, site.router, media.router, passport.router):
+          ledger.router, rx_scan.router, wearables.router, telemedicine.router, voice.router, board.router, contact.router, assistant.router, site.router, media.router, passport.router, passkeys.router, privacy.router):
     app.include_router(r)
 
 

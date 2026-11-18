@@ -2,7 +2,10 @@ import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { downloadOfflineCard } from "../components/offlineCard.js";
 import { downloadHealthCard, printHealthCard } from "../components/healthCard.js";
+import { decryptBlob, encryptFile, vaultSupported } from "../vault.js";
+import SecurityCenter from "../components/SecurityCenter.jsx";
 import PhotoUpload from "../components/PhotoUpload.jsx";
+import { deviceName, passkeySupported, registerPasskey } from "../passkey.js";
 import { api, tokenStore } from "../api.js";
 import { useAuth } from "../auth.jsx";
 import { Alert, Badge, Card, Empty, Field, useAsync } from "../components/ui.jsx";
@@ -151,11 +154,23 @@ function Documents() {
   const { busy, error, run } = useAsync();
   const load = () => api("/patients/me/documents").then(setList).catch(() => {});
   useEffect(() => { load(); }, []);
-  const upload = (e) => { e.preventDefault(); const form = new FormData(); form.append("file", file); form.append("title", title); form.append("category", cat); run(async () => { await api("/patients/me/documents", { method: "POST", form }); setFile(null); setTitle(""); e.target.reset(); load(); }); };
+  const [vault, setVault] = useState(false);
+  const [pass, setPass] = useState("");
+  const [unlock, setUnlock] = useState(null); // { id, pass }
+  const upload = (e) => { e.preventDefault(); run(async () => {
+    const form = new FormData();
+    form.append("title", title || file.name); form.append("category", cat);
+    if (vault) {
+      if (pass.length < 12) throw new Error("Vault passphrase must be at least 12 characters");
+      form.append("file", await encryptFile(file, pass), "vault.bin"); form.append("orig_name", file.name); form.append("orig_type", file.type || "application/octet-stream");
+      await api("/patients/me/documents/vault", { method: "POST", form }); setPass("");
+    } else { form.append("file", file); await api("/patients/me/documents", { method: "POST", form }); } setFile(null); setTitle(""); e.target.reset(); load(); }); };
   const download = (d) => run(async () => {
     const res = await fetch(`${BASE}/patients/documents/${d.id}/download`, { headers: { Authorization: `Bearer ${tokenStore.get()}` } });
     if (!res.ok) throw new Error("Download failed");
-    const url = URL.createObjectURL(await res.blob()); const a = document.createElement("a"); a.href = url; a.download = d.filename; a.click(); URL.revokeObjectURL(url);
+    let blob = await res.blob();
+    if (d.e2ee) { blob = await decryptBlob(blob, unlock?.pass || "", d.orig_type); setUnlock(null); } // decrypted only in this browser
+    const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = d.filename; a.click(); URL.revokeObjectURL(url);
   });
   return (
     <Card title="Medical documents (encrypted at rest)">
@@ -164,9 +179,16 @@ function Documents() {
         <select className="input" value={cat} onChange={(e) => setCat(e.target.value)}>{["report", "prescription", "scan", "discharge summary", "insurance", "other"].map((c) => <option key={c}>{c}</option>)}</select>
         <input className="input" type="file" required accept=".pdf,.png,.jpg,.jpeg,.txt,.dcm" onChange={(e) => setFile(e.target.files[0])} />
         <button className="btn-primary" disabled={busy || !file}>Upload</button>
+        {vaultSupported() && (
+          <label className="flex items-start gap-2 text-sm md:col-span-4">
+            <input type="checkbox" className="mt-1" checked={vault} onChange={(e) => setVault(e.target.checked)} />
+            <span><b>Private Vault</b> - encrypt in my browser so even the server and admins cannot read this file. Not available to the AI analyzer or for doctors unless you share the passphrase.</span>
+          </label>
+        )}
+        {vault && <div className="md:col-span-4"><input className="input" type="password" autoComplete="new-password" placeholder="Vault passphrase (12+ characters)" value={pass} onChange={(e) => setPass(e.target.value)} /><p className="mt-1 text-xs text-amber-700">There is no recovery. If you forget this passphrase the file can never be opened, by anyone.</p></div>}
       </form>
       <Alert tone="error">{error}</Alert>
-      {list.length === 0 ? <div className="mt-3"><Empty>No documents.</Empty></div> : <ul className="mt-3 divide-y divide-slate-100 text-sm">{list.map((d) => <li key={d.id} className="flex items-center justify-between py-2"><span><b>{d.title}</b> <span className="text-slate-500">{d.category} · {(d.size / 1024).toFixed(0)} KB · {d.created_at.slice(0, 10)}</span></span><span className="flex gap-2"><button className="btn-ghost py-1" onClick={() => download(d)}>Download</button><button className="text-xs text-red-600 hover:underline" onClick={() => run(async () => { await api(`/patients/me/documents/${d.id}`, { method: "DELETE" }); load(); })}>Delete</button></span></li>)}</ul>}
+      {list.length === 0 ? <div className="mt-3"><Empty>No documents.</Empty></div> : <ul className="mt-3 divide-y divide-slate-100 text-sm">{list.map((d) => <li key={d.id} className="flex items-center justify-between py-2"><span><b>{d.title}</b> <span className="text-slate-500">{d.category} · {(d.size / 1024).toFixed(0)} KB · {d.created_at.slice(0, 10)}</span></span><span className="flex gap-2">{d.e2ee && <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-800">vault</span>}{d.e2ee && unlock?.id === d.id && <input className="input py-1 text-xs" type="password" autoFocus placeholder="Passphrase" value={unlock.pass} onChange={(e) => setUnlock({ id: d.id, pass: e.target.value })} />}<button className="btn-ghost py-1" onClick={() => (d.e2ee && unlock?.id !== d.id ? setUnlock({ id: d.id, pass: "" }) : download(d))}>{d.e2ee && unlock?.id === d.id ? "Unlock & download" : "Download"}</button><button className="text-xs text-red-600 hover:underline" onClick={() => run(async () => { await api(`/patients/me/documents/${d.id}`, { method: "DELETE" }); load(); })}>Delete</button></span></li>)}</ul>}
     </Card>
   );
 }
@@ -225,13 +247,30 @@ function Security() {
     });
   };
   const twofa = () => run(async () => { await api(`/auth/two-factor?enable=${!user.two_factor}`, { method: "POST" }); setUser(await api("/auth/me")); });
+  const [keys, setKeys] = useState([]);
+  const [kname, setKname] = useState(deviceName());
+  const loadKeys = () => api("/auth/passkey").then(setKeys).catch(() => {});
+  useEffect(() => { loadKeys(); }, []);
+  const addKey = () => run(async () => { await registerPasskey(kname); setMsg("Fingerprint / face login added for this device."); loadKeys(); });
+  const delKey = (id) => { if (!window.confirm("Remove this device?")) return; run(async () => { await api(`/auth/passkey/${id}`, { method: "DELETE" }); loadKeys(); }); };
   return (
     <>
-      <Card title="Two-factor authentication"><div className="flex items-center justify-between text-sm"><span>Email/SMS code at login: <Badge tone={user.two_factor ? "good" : "muted"}>{user.two_factor ? "on" : "off"}</Badge></span><button className="btn-ghost" onClick={twofa}>{user.two_factor ? "Turn off" : "Turn on"}</button></div></Card>
+      <Card title="Fingerprint / face login">
+        {passkeySupported() ? (
+          <div className="space-y-3 text-sm">
+            <p className="text-slate-600">Log in with your phone's fingerprint, face unlock or screen-lock PIN instead of typing your password. Your fingerprint or face never leaves your device.</p>
+            {keys.length === 0 ? <p className="text-slate-500">No device added yet.</p> : <ul className="divide-y divide-slate-100">{keys.map((k) => <li key={k.id} className="flex items-center justify-between py-1.5"><span><b>{k.name}</b> <span className="text-xs text-slate-500">added {k.created_at.slice(0, 10)}{k.last_used ? ` · last used ${k.last_used.slice(0, 10)}` : ""}</span></span><button className="text-xs text-red-700 underline" onClick={() => delKey(k.id)}>Remove</button></li>)}</ul>}
+            <div className="flex gap-2"><input className="input max-w-[200px]" value={kname} maxLength={40} onChange={(e) => setKname(e.target.value)} aria-label="Device name" /><button className="btn-primary" onClick={addKey}>Add this device</button></div>
+            <p className="text-xs text-slate-500">Up to 5 devices. If you change the website address, add your devices again. Keep your password safe as a backup.</p>
+          </div>
+        ) : <p className="text-sm text-slate-600">This browser or connection does not support fingerprint / face login. Open the app over https in Chrome, Safari or Edge.</p>}
+      </Card>
+      <Card title="Two-factor authentication"><div className="flex items-center justify-between text-sm"><span>Email/SMS code at login: <Badge tone={user.two_factor || user.role === "admin" || user.role === "super_admin" ? "good" : "muted"}>{user.role === "admin" || user.role === "super_admin" ? "required" : user.two_factor ? "on" : "off"}</Badge></span>{user.role !== "admin" && user.role !== "super_admin" && <button className="btn-ghost" onClick={twofa}>{user.two_factor ? "Turn off" : "Turn on"}</button>}</div></Card>
       <Card title="Change password">
-        <form onSubmit={change} className="grid gap-2 md:grid-cols-3"><input className="input" type="password" placeholder="Current password" required value={pw.old_password} onChange={(e) => setPw({ ...pw, old_password: e.target.value })} /><input className="input" type="password" placeholder="New password (8+)" minLength={8} required value={pw.new_password} onChange={(e) => setPw({ ...pw, new_password: e.target.value })} />{sent && <input className="input" inputMode="numeric" placeholder="OTP" required value={pw.otp} onChange={(e) => setPw({ ...pw, otp: e.target.value })} />}<button className="btn-primary">{sent ? "Verify OTP & update" : "Send OTP"}</button></form>
+        <form onSubmit={change} className="grid gap-2 md:grid-cols-3"><input className="input" type="password" placeholder="Current password" required value={pw.old_password} onChange={(e) => setPw({ ...pw, old_password: e.target.value })} /><input className="input" type="password" placeholder="New password (10+, Aa1!)" minLength={10} required value={pw.new_password} onChange={(e) => setPw({ ...pw, new_password: e.target.value })} />{sent && <input className="input" inputMode="numeric" placeholder="OTP" required value={pw.otp} onChange={(e) => setPw({ ...pw, otp: e.target.value })} />}<button className="btn-primary">{sent ? "Verify OTP & update" : "Send OTP"}</button></form>
         <Alert tone="error">{error}</Alert><Alert tone="ok">{msg}</Alert>
       </Card>
+      <SecurityCenter />
     </>
   );
 }

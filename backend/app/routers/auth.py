@@ -6,11 +6,11 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
 
-from ..common import _send_email, email_configured, audit, clean, new_id, notify, now, public_user
+from ..common import _send_email, email_configured, audit, clean, hit_limit, new_id, notify, now, public_user
 from ..config import settings
 from ..db import get_db
 from ..deps import client_ip, current_user
-from ..security import create_token, hash_otp, hash_password, new_otp, password_problem, verify_password
+from ..security import create_token, hash_otp, hash_password, needs_rehash, new_otp, password_problem, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -144,6 +144,7 @@ async def register(body: RegisterIn, request: Request):
 
 @router.post("/resend-otp")
 async def resend_otp(body: EmailIn):
+    await hit_limit(get_db(), f"resend|{body.email.strip().lower()}", 6, 3600, "Too many OTP requests for this account. Try again later.")
     db = get_db()
     user = await db.users.find_one({"email": body.email.lower()})
     out = {"message": "If the account exists, an OTP has been sent."}
@@ -157,7 +158,7 @@ def _login_response(user: dict, token: str) -> dict:
     return {"token": token, "token_type": "bearer", "user": public_user(user)}
 
 
-async def _finish_login(db, user: dict, request: Request) -> dict:
+async def _finish_login(db, user: dict, request: Request, method: str = "password") -> dict:
     ip, ua = client_ip(request), request.headers.get("user-agent", "")[:200]
     seen = await db.login_history.find_one({"user_id": user["id"], "ip": ip, "success": True})
     first_ever = not await db.login_history.find_one({"user_id": user["id"], "success": True})
@@ -166,13 +167,15 @@ async def _finish_login(db, user: dict, request: Request) -> dict:
     if not seen and not first_ever:
         await notify(db, user, "New login location", f"New sign-in from {ip or 'unknown IP'}. If this wasn't you, change your password.", "security", ("app", "email"))
         await audit(db, user["id"], "suspicious_login", f"new ip {ip}", ip)
-    token, _ = create_token(user["id"], user["role"])
-    await audit(db, user["id"], "login", "", ip)
+    token, jti = create_token(user["id"], user["role"])
+    await db.sessions.insert_one({"id": jti, "user_id": user["id"], "ip": ip, "ua": ua, "created": now(), "last_seen": now(), "method": method})
+    await audit(db, user["id"], "login", method, ip)
     return _login_response(user, token)
 
 
 @router.post("/login")
 async def login(body: LoginIn, request: Request):
+    await hit_limit(get_db(), f"login-acct|{body.email.strip().lower()}", 20, 900)  # per account, whatever the IP: stops distributed guessing
     db = get_db()
     email, ip = body.email.lower(), client_ip(request)
     user = await db.users.find_one({"email": email})
@@ -187,22 +190,27 @@ async def login(body: LoginIn, request: Request):
         if fails >= MAX_FAILED:
             upd["locked_until"] = (datetime.now(timezone.utc) + timedelta(minutes=LOCK_MIN)).isoformat(timespec="seconds")
             upd["failed_logins"] = 0
+            await notify(db, user, "Account locked", f"Your account was locked for {LOCK_MIN} minutes after {MAX_FAILED} wrong passwords (last from {ip or 'unknown IP'}). If this wasn't you, reset your password.", "security", ("app", "email"))
+            await audit(db, user["id"], "account_locked", f"{MAX_FAILED} failed logins", ip)
         await db.users.update_one({"id": user["id"]}, {"$set": upd})
         await db.login_history.insert_one({"id": new_id(), "user_id": user["id"], "ip": ip, "ua": "", "success": False, "ts": now()})
         raise generic
     if user.get("status") == "suspended":
         raise HTTPException(403, "Account suspended")
+    if needs_rehash(user["password_hash"]):  # transparently upgrade old hashes (scrypt -> Argon2id)
+        await db.users.update_one({"id": user["id"]}, {"$set": {"password_hash": hash_password(body.password)}})
     if not user.get("email_verified"):
         raise HTTPException(403, "Please verify your OTP first (use /auth/resend-otp if it expired)")
-    if user.get("two_factor"):
+    if user.get("two_factor") or user["role"] in ("admin", "super_admin"):  # 2FA is mandatory for admin accounts
         otp = await _issue_otp(db, user, "login")
         out = {"requires_otp": True, "message": "Enter the OTP sent to you to finish logging in."}
         return out
-    return await _finish_login(db, user, request)
+    return await _finish_login(db, user, request, "password")
 
 
 @router.post("/verify-otp")
 async def verify_otp(body: OtpIn, request: Request):
+    await hit_limit(get_db(), f"verify-acct|{body.email.strip().lower()}", 15, 600)
     db = get_db()
     email = body.email.lower()
     user = await db.users.find_one({"email": email})
@@ -212,11 +220,12 @@ async def verify_otp(body: OtpIn, request: Request):
     if body.purpose == "register":
         await db.users.update_one({"id": user["id"]}, {"$set": {"email_verified": True}})
         return {"message": "Verified. You can now log in.", "verified": True}
-    return await _finish_login(db, user, request)
+    return await _finish_login(db, user, request, "password+otp")
 
 
 @router.post("/forgot-password")
 async def forgot_password(body: EmailIn):
+    await hit_limit(get_db(), f"forgot|{body.email.strip().lower()}", 3, 3600, "Too many reset requests for this account. Try again in an hour.")
     db = get_db()
     user = await db.users.find_one({"email": body.email.lower()})
     out = {"message": "If the account exists, a reset OTP has been sent."}
@@ -227,6 +236,7 @@ async def forgot_password(body: EmailIn):
 
 @router.post("/reset-password")
 async def reset_password(body: ResetIn):
+    await hit_limit(get_db(), f"reset|{body.email.strip().lower()}", 10, 3600)
     db = get_db()
     if (p := password_problem(body.new_password)):
         raise HTTPException(400, p)
@@ -271,6 +281,8 @@ async def change_password(body: ChangePwIn, user: dict = Depends(current_user)):
 
 @router.post("/two-factor")
 async def two_factor(enable: bool, user: dict = Depends(current_user)):
+    if not enable and user["role"] in ("admin", "super_admin"):
+        raise HTTPException(400, "Two-factor login is mandatory for admin accounts")
     await get_db().users.update_one({"id": user["id"]}, {"$set": {"two_factor": enable}})
     return {"two_factor": enable}
 
@@ -284,5 +296,6 @@ async def me(user: dict = Depends(current_user)):
 async def logout(user: dict = Depends(current_user)):
     db = get_db()
     await db.revoked_tokens.insert_one({"jti": user["_jti"], "ts": now()})
+    await db.sessions.delete_one({"id": user["_jti"]})
     await audit(db, user["id"], "logout")
     return {"message": "Logged out"}

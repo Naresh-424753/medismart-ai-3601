@@ -14,7 +14,10 @@ services:
       - { key: DB_NAME, value: medismart }
       - { key: MONGO_URL, sync: false }        # MongoDB Atlas connection string
       - { key: JWT_SECRET, generateValue: true }
-      - { key: DATA_KEY, sync: false }         # Fernet key, see DEPLOY.md
+      - { key: DATA_KEY, sync: false }         # 32+ random characters; back it up (without it encrypted data is unreadable)
+      - { key: REAL_PATIENT_DATA, value: "0" } # set to 1 only for real patient data: the API then refuses to start on an unsafe config
+      - { key: TRUSTED_PROXY_HOPS, value: "1" } # 1 = Render only; 2 = Cloudflare in front of Render
+      - { key: BREVO_API_KEY, sync: false }
       - { key: ADMIN_EMAIL, sync: false }
       - { key: ADMIN_PASSWORD, sync: false }
       - { key: CORS_ORIGINS, sync: false }     # your frontend URL, e.g. https://medismart.vercel.app

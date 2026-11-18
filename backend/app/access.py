@@ -1,7 +1,7 @@
 """Who may see a patient's data? Patient himself; a doctor with a non-cancelled appointment or an active consent;
 a family member / any grantee with an active consent covering the scope."""
 from .common import now
-from .services import ledger
+from .services import audit_logger, ledger
 
 
 # the most a role may ever see through patient consent, whatever the patient ticks
@@ -10,8 +10,11 @@ ROLE_SCOPE_CAP = {"nurse": {"summary", "vitals", "medicines"}}
 
 async def can_access(db, viewer: dict, patient_user_id: str, scope: str = "summary") -> bool:
     ok = await _can_access(db, viewer, patient_user_id, scope)
-    if ok and viewer["id"] != patient_user_id:  # every third-party read is recorded on the patient's ledger
-        await ledger.append(db, patient_user_id, "access_event", {"viewer_role": viewer["role"], "scope": scope}, actor=viewer["id"])
+    if viewer["id"] != patient_user_id:
+        # every third-party read (and every refused attempt) goes to the patient's ledger AND to the tamper-proof audit chain
+        if ok:
+            await ledger.append(db, patient_user_id, "access_event", {"viewer_role": viewer["role"], "scope": scope}, actor=viewer["id"])
+        await audit_logger.phi_event(db, viewer, patient_user_id, "phi_read" if ok else "phi_denied", scope)
     return ok
 
 

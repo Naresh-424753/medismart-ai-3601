@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+
+from . import llm_guard
 import time
 
 _state = {"fails": 0, "open_until": 0.0, "last_error": "", "last_ok": 0.0, "calls": 0}
@@ -43,6 +45,11 @@ def _fail(msg: str) -> None:
 
 
 async def generate(system: str, messages: list[dict], max_tokens: int = 500, search: bool = True) -> str | None:
+    system, messages, restore = llm_guard.protect(system, messages)  # PII never reaches Google; placeholders are swapped back locally
+    return restore(await _generate_raw(system, messages, max_tokens, search))
+
+
+async def _generate_raw(system: str, messages: list[dict], max_tokens: int = 500, search: bool = True) -> str | None:
     key = os.getenv("GEMINI_API_KEY")
     if not key or time.time() < _state["open_until"]:
         return None

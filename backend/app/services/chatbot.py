@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import re
 
-from . import drugs, gemini, symptoms
+from . import drugs, gemini, llm_guard, symptoms
 
 GLOSSARY = {
     "hypertension": "Persistently high blood pressure (usually 140/90 mmHg or more).",
@@ -101,6 +101,12 @@ def reply(message: str, lang: str | None = None) -> dict:
 
 
 async def llm_reply(message: str, history: list[dict], language: str = "English") -> str | None:
+    msgs = [{"role": h["role"], "content": h["content"]} for h in history[-8:]] + [{"role": "user", "content": message}]
+    _, msgs, restore = llm_guard.protect("", msgs)
+    return restore(await _llm_reply_raw(msgs[-1]["content"], msgs[:-1], language))
+
+
+async def _llm_reply_raw(message: str, history: list[dict], language: str = "English") -> str | None:
     """Optional LLM. Set LLM_API_KEY (and optionally LLM_MODEL). Returns None if not configured/failing."""
     key = os.getenv("LLM_API_KEY")
     if not key and not gemini.enabled():

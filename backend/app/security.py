@@ -12,27 +12,56 @@ import jwt
 from .config import settings
 
 
+try:  # Argon2id is used when argon2-cffi is installed (it is in requirements.txt); otherwise scrypt is the fallback
+    from argon2 import PasswordHasher
+    from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
+    _argon = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=2)  # 64 MiB, OWASP-grade
+except ImportError:  # pragma: no cover - depends on the environment
+    _argon = None
+
+
+def _scrypt(pw: str, salt: bytes) -> bytes:
+    return hashlib.scrypt(pw.encode(), salt=salt, n=2**14, r=8, p=1, dklen=32)
+
+
 def hash_password(pw: str) -> str:
+    if _argon:
+        return _argon.hash(pw)
     salt = os.urandom(16)
-    h = hashlib.scrypt(pw.encode(), salt=salt, n=2**14, r=8, p=1, dklen=32)
-    return "scrypt$" + base64.b64encode(salt).decode() + "$" + base64.b64encode(h).decode()
+    return "scrypt$" + base64.b64encode(salt).decode() + "$" + base64.b64encode(_scrypt(pw, salt)).decode()
 
 
 def verify_password(pw: str, stored: str) -> bool:
     try:
+        if stored.startswith("$argon2"):
+            return bool(_argon) and _argon.verify(stored, pw)
         _, s, h = stored.split("$")
-        salt, want = base64.b64decode(s), base64.b64decode(h)
-        got = hashlib.scrypt(pw.encode(), salt=salt, n=2**14, r=8, p=1, dklen=32)
-        return hmac.compare_digest(got, want)
+        return hmac.compare_digest(_scrypt(pw, base64.b64decode(s)), base64.b64decode(h))
     except Exception:
         return False
 
 
+def needs_rehash(stored: str) -> bool:
+    """True when a stored hash should be upgraded after a successful login (scrypt -> Argon2id, or weaker Argon2 params)."""
+    if not _argon:
+        return False
+    return not stored.startswith("$argon2id") or _argon.check_needs_rehash(stored)
+
+
+_COMMON = {"password", "password1", "password123", "passw0rd", "qwerty123", "qwertyuiop", "letmein123", "welcome123", "admin123", "iloveyou1",
+           "abc12345", "abcd1234", "12345678", "123456789", "1234567890", "medismart", "medismart123", "india123", "test1234", "changeme"}
+
+
 def password_problem(pw: str) -> str | None:
-    if len(pw) < 8:
-        return "Password must be at least 8 characters"
-    if not re.search(r"[A-Za-z]", pw) or not re.search(r"\d", pw):
-        return "Password must contain letters and digits"
+    if len(pw) < 10:
+        return "Password must be at least 10 characters"
+    if len(pw) > 128:
+        return "Password is too long (max 128 characters)"
+    if not (re.search(r"[a-z]", pw) and re.search(r"[A-Z]", pw) and re.search(r"\d", pw) and re.search(r"[^A-Za-z0-9]", pw)):
+        return "Password needs an uppercase letter, a lowercase letter, a digit and a symbol"
+    low = re.sub(r"[^a-z0-9]", "", pw.lower())
+    if any(c in low for c in _COMMON) or re.search(r"(.)\1{3,}", pw):
+        return "Password is too common or repetitive - choose something less guessable"
     return None
 
 

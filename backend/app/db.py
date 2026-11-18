@@ -75,7 +75,7 @@ INDEXES = [
     ("ledger_blocks", [("chain", 1), ("index", 1)], {"unique": True}), ("wearable_samples", "k", {"unique": True}),
     ("board_cases", "patient_id", {}), ("board_cases", "panel.doctor_user_id", {}), ("fl_models", "disease", {"unique": True}), ("fl_rounds", [("disease", 1), ("status", 1)], {}),
     ("ews_state", "user_id", {"unique": True}), ("ews_settings", "user_id", {"unique": True}), ("ews_events", [("user_id", 1), ("ts", -1)], {}),
-    ("otps", [("email", 1), ("purpose", 1)], {}), ("users", "role", {}), ("assistant_sessions", [("user_id", 1), ("updated", -1)], {}), ("assistant_sessions", "id", {"unique": True}), ("contact_messages", [("status", 1), ("ts", -1)], {}), ("revoked_tokens", "jti", {"unique": True}), ("media", "id", {"unique": True}), ("passport_tokens", "token_hash", {"unique": True}), ("passport_tokens", "user_id", {}), ("passport_views", [("patient_user_id", 1), ("ts", -1)], {}), ("media", "owner", {}),
+    ("otps", [("email", 1), ("purpose", 1)], {}), ("users", "role", {}), ("assistant_sessions", [("user_id", 1), ("updated", -1)], {}), ("assistant_sessions", "id", {"unique": True}), ("contact_messages", [("status", 1), ("ts", -1)], {}), ("revoked_tokens", "jti", {"unique": True}), ("media", "id", {"unique": True}), ("passport_tokens", "token_hash", {"unique": True}), ("passkeys", "credential_id", {"unique": True}), ("passkeys", "user_id", {}), ("webauthn_challenges", "id", {"unique": True}), ("passport_tokens", "user_id", {}), ("passport_views", [("patient_user_id", 1), ("ts", -1)], {}), ("media", "owner", {}), ("rate_hits", [("key", 1), ("at", -1)], {}), ("rate_hits", "at", {"expireAfterSeconds": 900}), ("sessions", "user_id", {}), ("sessions", "id", {"unique": True}),
 ]
 
 

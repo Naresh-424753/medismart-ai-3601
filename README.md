@@ -205,3 +205,36 @@ Security: the QR holds only a random 192-bit token; the server stores its SHA-25
 - My health > Profile: patients upload a profile photo (`/media/upload`, EXIF removed). It is shown on the Health ID, the public emergency card page and the Health Passport view. Anyone who scans the emergency QR can see it.
 - My health > Overview: **Download card (PNG)** draws a credit-card sized front + back (photo, name, Health ID, blood group, allergies, contacts, conditions, QR, 112/108), **Print** prints it at card size, **Offline page** keeps the old self-contained HTML.
 - Image AI > **Previous analyses**: every analysis is saved; **View report** shows the stored text report and **Download report** saves it.
+
+## Fingerprint / face login (passkeys)
+
+My health > Security > **Fingerprint / face login** > *Add this device*. After that the login page has **Login with fingerprint / face**. It uses WebAuthn: the phone/computer checks the fingerprint, face or screen-lock PIN and signs a one-time challenge; the server stores only a public key (`passkeys` collection). User verification is mandatory, so it counts as two factors and skips the email OTP. Up to 5 devices per account, each can be removed; adds and removals are audit-logged and the user is notified.
+- Needs https (Vercel is) and the website address must be listed in `CORS_ORIGINS` on Render. Keys are bound to that domain: if the website address changes, add the devices again.
+- ES256 (Android, iPhone, Mac) and RS256 (Windows Hello) keys are supported. Attestation is not verified (device model is not checked).
+- Passwords keep working as the backup. Challenges are single-use and expire in 5 minutes; a signature counter going backwards (cloned key) is refused.
+
+## Security hardening (what is built, what is not)
+
+**Built into this code**
+- **Passwords**: min 10 chars with upper, lower, digit and symbol; common/repetitive passwords refused. Hashing is **Argon2id** (needs `argon2-cffi`, in requirements.txt); old scrypt hashes still work and are upgraded to Argon2id automatically at the user's next login. `GET /admin/system-check` warns if Argon2 is not installed.
+- **Login**: lockout after 5 wrong passwords (15 min) + alert to the user, new-location login alert, email-OTP 2FA (optional for users, **mandatory for admin / super_admin**), fingerprint/face login (passkeys), idle auto-logout in the web app (15 min, `VITE_IDLE_MIN`).
+- **Sessions & privacy** (Profile -> Security): active devices, remote logout of one device, **log out from all devices**, login history, download my data, delete my account (password + `DELETE`).
+- **Encryption**: uploaded documents use **AES-256-GCM** (authenticated; old Fernet files remain readable). Admin backups (`POST /admin/backup`) are AES-256-GCM encrypted; read one with `python ../scripts/decrypt_backup.py <file>.json.enc` from `backend/`. Set `DATA_KEY` (any long random string) in production and keep a copy: without it, encrypted data cannot be read.
+- **Admin**: RBAC, tamper-evident audit log, `GET /admin/security-alerts` (lockouts, new-IP logins, password changes, noisy IPs), `GET /admin/admin-activity`, `POST /admin/breach-notice` (notify all users, optionally force re-login), optional `ADMIN_IP_ALLOWLIST=ip1,ip2`, phone numbers masked in admin lists.
+- **Web hardening**: CSP, HSTS, nosniff, frame-deny, Permissions-Policy on the API and in `frontend/vercel.json`; `/docs` and `/openapi.json` are off unless `DEV_MODE=1`; per-IP rate limits on login/OTP/etc.
+- **Injection / CSRF**: all inputs go through typed Pydantic models and Motor queries (there is no SQL, and queries are not built from raw user-supplied dicts in the code paths I checked: auth, privacy, admin; a full injection audit is still part of pen testing); React escapes output (XSS). The API uses a Bearer token, not cookies, so classic CSRF does not apply.
+
+**Not something this code can do (needs your hosting or a native app)**
+- TLS 1.3 / DDoS protection / WAF / API gateway: Render and Vercel terminate TLS; put **Cloudflare** (free tier) in front for WAF + DDoS.
+- Encrypted DB backups at provider level, disaster recovery: MongoDB Atlas (paid tiers) backups + encryption at rest.
+- 24/7 monitoring, automated vulnerability scanning, pen testing: UptimeRobot/Better Stack, GitHub Dependabot + `pip-audit`/`npm audit`, and a professional pen-test before real patient data.
+- Root/jailbreak detection, app tamper/signature checks, code obfuscation, emulator detection, screenshot blocking: only possible in a native Android/iOS app (this project is a web app/PWA; browsers cannot block screenshots or detect root).
+- Mobile-number OTP by SMS: needs Twilio credentials (the code path exists; email OTP works today).
+
+**Real patient data**: set `REAL_PATIENT_DATA=1` on Render. The API then refuses to start unless DEV_MODE is off, MongoDB is real, `JWT_SECRET` and `DATA_KEY` are strong, demo seeding is off, CORS lists only https origins, e-mail is configured and Argon2 is installed. Client IPs are read safely behind proxies (`TRUSTED_PROXY_HOPS`), and rate limits are stored in MongoDB so they survive restarts. Full checklist: `docs/GO_LIVE_SECURITY.md`.
+
+### Extra privacy layers
+- **PII redaction before AI** (`services/llm_guard.py`): every prompt to Gemini / Anthropic is scrubbed first (e-mail, UPI, phone, Aadhaar, PAN, card numbers, DOB, PIN, "address:", "my name is ...", and the logged-in user's own name/e-mail/phone). The model sees placeholders like `[NAME_1]`; the answer is re-personalised locally. Rule-based, so free-text names/addresses can slip through: it is a strong filter, not a guarantee.
+- **PHI access trail** (`services/audit_logger.py`): every third-party read of a patient's data, every refused attempt, document downloads and prescription PDFs go into the SHA-256 hash-chained audit log. Patients see it under Profile -> Security -> "Who accessed my records" (`GET /privacy/access-log`); admins review with `GET /admin/phi-access?patient_email=` (that lookup is itself logged); integrity: `GET /admin/audit-logs/verify`.
+- **Rate limits**: per IP and endpoint (MongoDB-backed), per account on login / OTP / forgot / reset (stops distributed guessing), and per user by role (patient 240/min, staff 400, admin 600). No Redis needed.
+- **Private Vault** (`frontend/src/vault.js`): optional end-to-end encryption for documents. The browser encrypts with AES-256-GCM, key from your passphrase (PBKDF2-SHA256, 600k iterations); the server stores ciphertext only. No passphrase recovery. Vault files cannot be used by the AI analyzer, and a doctor can only open one if the patient shares the passphrase. Telemedicine chat is NOT end-to-end encrypted (it needs per-pair key exchange and would disable the AI chat summary).

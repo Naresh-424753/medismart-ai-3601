@@ -143,3 +143,14 @@ async def notify(db, user: dict | None, title: str, body: str, kind: str = "info
             await loop.run_in_executor(None, fn, *args)
         except Exception as e:  # delivery problems must never break the request
             await audit(db, uid, "notify_failed", f"{name}: {str(e)[:180]}")
+
+
+async def hit_limit(db, key: str, n: int, window_s: int, msg: str = "Too many attempts. Please wait a while and try again."):
+    """Per-key throttle stored in MongoDB (survives restarts, shared by all server instances). Raises 429 when `key` was seen n times in the window."""
+    from datetime import datetime, timedelta, timezone
+
+    from fastapi import HTTPException
+    since = datetime.now(timezone.utc) - timedelta(seconds=window_s)
+    if await db.rate_hits.count_documents({"key": key, "at": {"$gte": since}}) >= n:
+        raise HTTPException(429, msg)
+    await db.rate_hits.insert_one({"key": key, "at": datetime.now(timezone.utc)})

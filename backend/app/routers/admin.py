@@ -1,7 +1,7 @@
 import json
 import os
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, EmailStr, Field
 
 from ..common import audit, new_id, notify, now, public_user
@@ -35,7 +35,11 @@ async def users(role: str | None = None, pending: bool = False, q: str | None = 
     if pending:
         f["approved"] = False
     rows = await get_db().users.find(f).sort("created_at", -1).limit(500).to_list(500)
+    from .privacy import mask_phone
     out = [public_user(u) for u in rows if not q or q.lower() in (u["name"] + u["email"]).lower()]
+    for u in out:  # sensitive data masking: the list view never shows full phone numbers (the detail view does, and is audited)
+        if u.get("phone"):
+            u["phone"] = mask_phone(u["phone"])
     return out
 
 
@@ -69,22 +73,11 @@ _OWNED = [("assistant_sessions", "user_id"), ("medicines", "user_id"), ("med_log
           ("imaging_results", "user_id"), ("chat_history", "user_id"), ("login_history", "user_id"), ("wearable_samples", "user_id"),
           ("ews_state", "user_id"), ("ews_settings", "user_id"), ("ews_events", "user_id"), ("consents", "patient_user_id"),
           ("appointments", "patient_user_id"), ("pharmacy_stock", "user_id"), ("pharmacies", "user_id"), ("hospitals", "user_id"),
-          ("doctors", "user_id"), ("patients", "user_id")]
+          ("doctors", "user_id"), ("patients", "user_id"), ("sessions", "user_id"), ("passkeys", "user_id"), ("passport_tokens", "user_id"), ("media", "owner")]
 
 
-@router.delete("/users/{uid}")
-async def delete_user(uid: str, user: dict = Depends(admin_only)):
-    """Permanently deletes an account and its personal data. The tamper-evident ledger and the audit log are kept on purpose."""
-    db = get_db()
-    target = await db.users.find_one({"id": uid})
-    if not target:
-        raise HTTPException(404, "User not found")
-    if uid == user["id"]:
-        raise HTTPException(400, "You cannot delete your own account")
-    if target["role"] == "super_admin":
-        raise HTTPException(403, "The super admin account cannot be deleted")
-    if target["role"] == "admin" and user["role"] != "super_admin":
-        raise HTTPException(403, "Only a super admin can delete admin accounts")
+async def erase_account(db, uid: str) -> dict:
+    """Removes an account and its personal data (shared by admin delete and self-service deletion)."""
     pat = await db.patients.find_one({"user_id": uid}, {"_id": 0, "id": 1})
     if pat:
         for col in ("vitals", "vital_alerts", "board_cases"):
@@ -100,6 +93,23 @@ async def delete_user(uid: str, user: dict = Depends(admin_only)):
         n = getattr(r, "deleted_count", 0)
         if n:
             counts[col] = n
+    return counts
+
+
+@router.delete("/users/{uid}")
+async def delete_user(uid: str, user: dict = Depends(admin_only)):
+    """Permanently deletes an account and its personal data. The tamper-evident ledger and the audit log are kept on purpose."""
+    db = get_db()
+    target = await db.users.find_one({"id": uid})
+    if not target:
+        raise HTTPException(404, "User not found")
+    if uid == user["id"]:
+        raise HTTPException(400, "You cannot delete your own account")
+    if target["role"] == "super_admin":
+        raise HTTPException(403, "The super admin account cannot be deleted")
+    if target["role"] == "admin" and user["role"] != "super_admin":
+        raise HTTPException(403, "Only a super admin can delete admin accounts")
+    counts = await erase_account(db, uid)
     await db.otps.delete_many({"email": target["email"]})
     await db.users.delete_one({"id": uid})
     await audit(db, user["id"], "admin_delete_user", f"{target['email']} ({target['role']})")
@@ -216,6 +226,11 @@ def env_problems() -> list[str]:
         out.append("DATA_KEY is not set (documents are encrypted with a key derived from JWT_SECRET)")
     if getattr(st, "DEV_MODE", False):
         out.append("DEV_MODE is on: OTPs are printed to the log")
+    from ..security import _argon
+    if not _argon:
+        out.append("argon2-cffi is not installed: passwords use scrypt instead of Argon2id (pip install argon2-cffi)")
+    if not st.ADMIN_IP_ALLOWLIST:
+        out.append("ADMIN_IP_ALLOWLIST is empty: admin accounts can log in from any network (optional hardening)")
     return out
 
 
@@ -254,18 +269,84 @@ async def login_history(user_id: str | None = None, user: dict = Depends(admin_o
 
 @router.post("/backup")
 async def backup(user: dict = Depends(super_only)):
-    """Dumps non-sensitive collections to JSON files on the server (use mongodump for full production backups)."""
+    """Dumps core collections as AES-256-GCM encrypted files on the server (use Atlas backups / mongodump with encryption for full production backups)."""
     db = get_db()
     folder = os.path.join("data", "backups", now().replace(":", "-"))
     os.makedirs(folder, exist_ok=True)
     counts = {}
     for c in ["users", "patients", "doctors", "appointments", "reports", "medicines", "hospitals", "audit_logs"]:
         rows = await db[c].find({}, {"_id": 0, "password_hash": 0}).to_list(1000000)
-        with open(os.path.join(folder, c + ".json"), "w") as f:
-            json.dump(rows, f, default=str)
+        from ..crypto import encrypt
+        with open(os.path.join(folder, c + ".json.enc"), "wb") as f:  # AES-256-GCM; decrypt with scripts/decrypt_backup.py
+            f.write(encrypt(json.dumps(rows, default=str).encode()))
         counts[c] = len(rows)
     await audit(db, user["id"], "backup", folder)
     return {"folder": folder, "counts": counts}
+
+
+_ALERT_ACTIONS = ["account_locked", "suspicious_login", "password_reset", "password_change", "logout_all", "account_self_deleted", "admin_delete_user", "make_admin", "passkey_added", "passkey_removed"]
+
+
+@router.get("/security-alerts")
+async def security_alerts(hours: int = 72, user: dict = Depends(admin_only)):
+    """Recent security-relevant events (lockouts, new-location logins, password changes, admin changes) and a failed-login summary."""
+    from datetime import datetime, timedelta, timezone
+    db = get_db()
+    since = (datetime.now(timezone.utc) - timedelta(hours=max(1, min(hours, 720)))).isoformat(timespec="seconds")
+    events = await db.audit_logs.find({"action": {"$in": _ALERT_ACTIONS}, "ts": {"$gte": since}}, {"_id": 0}).sort("ts", -1).limit(200).to_list(200)
+    fails = await db.login_history.find({"success": False, "ts": {"$gte": since}}, {"_id": 0}).to_list(5000)
+    by_ip: dict[str, int] = {}
+    for f in fails:
+        by_ip[f.get("ip") or "?"] = by_ip.get(f.get("ip") or "?", 0) + 1
+    noisy = sorted(({"ip": ip, "failed_logins": n} for ip, n in by_ip.items() if n >= 5), key=lambda x: -x["failed_logins"])
+    return {"since": since, "events": events, "failed_login_total": len(fails), "ips_with_5plus_failures": noisy}
+
+
+@router.get("/phi-access")
+async def phi_access_review(patient_email: str, user: dict = Depends(admin_only)):
+    """Compliance review: who accessed one patient's data. The lookup itself is audited."""
+    from ..deps import client_ip  # noqa: F401
+    from ..services import audit_logger
+    db = get_db()
+    p = await db.users.find_one({"email": patient_email.strip().lower()})
+    if not p:
+        raise HTTPException(404, "Patient not found")
+    await audit(db, user["id"], "phi_access_review", f"subject={p['id']}|admin lookup", "", user["role"])
+    return await audit_logger.trail_for(db, p["id"], 500)
+
+
+@router.get("/admin-activity")
+async def admin_activity(limit: int = 200, user: dict = Depends(admin_only)):
+    """What admin accounts did: every audit row written by an admin / super_admin."""
+    return await get_db().audit_logs.find({"role": {"$in": ["admin", "super_admin"]}}, {"_id": 0}).sort("ts", -1).limit(min(limit, 1000)).to_list(1000)
+
+
+class BreachIn(BaseModel):
+    title: str = Field(min_length=3, max_length=120)
+    message: str = Field(min_length=10, max_length=2000)
+    role: str | None = None
+    force_logout: bool = False
+
+
+@router.post("/breach-notice")
+async def breach_notice(body: BreachIn, request: Request, user: dict = Depends(super_only)):
+    """Data-breach notification: in-app + e-mail notice to every user (or one role). Optionally forces everyone to log in again."""
+    import time
+    from ..deps import client_ip
+    db = get_db()
+    q = {"role": body.role} if body.role else {}
+    n = 0
+    async for u in db.users.find(q):
+        await notify(db, u, body.title, body.message, "security", ("app", "email"))
+        n += 1
+    if body.force_logout:
+        await db.users.update_many(q, {"$set": {"sessions_valid_after": int(time.time())}})
+        async for u in db.users.find(q, {"_id": 0, "id": 1}):
+            async for s in db.sessions.find({"user_id": u["id"]}, {"_id": 0, "id": 1}):
+                await db.revoked_tokens.insert_one({"jti": s["id"], "ts": now()})
+            await db.sessions.delete_many({"user_id": u["id"]})
+    await audit(db, user["id"], "breach_notice", f"{n} users notified; force_logout={body.force_logout}", client_ip(request), user["role"])
+    return {"notified": n, "force_logout": body.force_logout}
 
 
 # ---- family dashboard ----

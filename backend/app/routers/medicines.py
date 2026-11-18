@@ -11,7 +11,7 @@ from ..config import settings
 from ..db import get_db
 from ..deps import current_user, require_roles
 from ..security import sign
-from ..services import drugs, ledger, report_analyzer
+from ..services import audit_logger, drugs, ledger, report_analyzer
 
 router = APIRouter(tags=["medicines & prescriptions"])
 patient_only = require_roles("patient")
@@ -607,7 +607,7 @@ async def rx_pdf(rid: str, user: dict = Depends(current_user)):
     patient = {"name": pu.get("name"), "phone": pu.get("phone"), "sex": pp.get("sex"), "age": age_from_dob(pp.get("dob")), "allergies": [a["name"] for a in pp.get("allergies", [])]}
     doctor = {"name": rx["doctor_name"], "specialization": du.get("specialization"), "license_no": du.get("license_no"), "hospital": du.get("hospital")}
     data = rxpdf.build(rx, patient, doctor, rx["sig"])
-    await audit(db, user["id"], "rx_pdf_download", rx["code"])
+    await audit_logger.phi_event(db, user, rx["patient_user_id"], "rx_pdf_download", rx["code"])
     return Response(data, media_type="application/pdf", headers={"Content-Disposition": f'attachment; filename="prescription-{rx["code"]}.pdf"'})
 
 

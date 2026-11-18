@@ -13,7 +13,7 @@ import json
 import os
 import re
 
-from . import ml, symptoms, vitals_rules
+from . import llm_guard, ml, symptoms, vitals_rules
 
 CANON = {
     "diabetes": ("Diabetes / glucose disorder", "Endocrinologist"), "heart": ("Heart disease", "Cardiologist"), "kidney": ("Kidney disease", "Nephrologist"),
@@ -126,7 +126,7 @@ async def provider_llm(packet: dict) -> dict:
         import httpx
         async with httpx.AsyncClient(timeout=45) as c:
             r = await c.post("https://api.anthropic.com/v1/messages", headers={"x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-                             json={"model": os.getenv("LLM_MODEL", "claude-sonnet-5-5"), "max_tokens": 600, "system": LLM_SYSTEM, "messages": [{"role": "user", "content": json.dumps(packet)[:6000]}]})
+                             json={"model": os.getenv("LLM_MODEL", "claude-sonnet-5-5"), "max_tokens": 600, "system": LLM_SYSTEM, "messages": [{"role": "user", "content": llm_guard.protect_text(json.dumps(packet)[:6000])[0]}]})
             r.raise_for_status()
             text = "".join(b.get("text", "") for b in r.json().get("content", []))
         return {**base, "available": True, "items": parse_llm_json(text)}

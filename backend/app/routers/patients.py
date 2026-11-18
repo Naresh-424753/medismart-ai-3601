@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field
 
 from .. import crypto
 from ..access import can_access
-from ..services import blobstore, ledger
+from ..services import audit_logger, blobstore, ledger
 from ..common import audit, clean, log_event, new_id, now
 from ..config import settings
 from ..db import get_db
@@ -229,6 +229,27 @@ async def upload_document(file: UploadFile = File(...), title: str = Form(""), c
     return clean(doc)
 
 
+@router.post("/me/documents/vault", status_code=201)
+async def upload_vault_document(file: UploadFile = File(...), title: str = Form(...), category: str = Form("report"), orig_name: str = Form("file"),
+                                orig_type: str = Form("application/octet-stream"), user: dict = Depends(patient_only)):
+    """Private Vault: the browser already encrypted the file with a key derived from the patient's passphrase (AES-256-GCM, Web Crypto).
+    We receive and store ciphertext only; the passphrase and the key never reach the server, so neither admins nor a database leak can read it."""
+    data = await file.read()
+    if not data.startswith(b"MSV1") or len(data) < 40:
+        raise HTTPException(400, "Not a valid vault file (encrypt it in the app first)")
+    if len(data) > settings.MAX_UPLOAD_MB * 1024 * 1024:
+        raise HTTPException(413, f"File too large (max {settings.MAX_UPLOAD_MB} MB)")
+    did = new_id()
+    blobstore.put(user["id"], did, crypto.encrypt(data))  # second layer; protects the ciphertext at rest too
+    db = get_db()
+    doc = {"id": did, "user_id": user["id"], "title": title[:120], "category": category[:40], "filename": re.sub(r"[^\w.\- ]", "_", orig_name)[:120],
+           "ext": ".vault", "size": len(data), "content_type": "application/octet-stream", "orig_type": orig_type[:80], "e2ee": True, "created_at": now()}
+    await db.documents.insert_one(dict(doc))
+    await log_event(db, user["id"], "document", f"Uploaded private vault document: {doc['title']}")
+    await ledger.append(db, user["id"], "document", {"document_id": did, "sha256": ledger.sha256_hex(data), "title": doc["title"][:80], "e2ee": True}, actor=user["id"])
+    return clean(doc)
+
+
 @router.get("/me/documents")
 async def list_documents(user: dict = Depends(patient_only)):
     return await get_db().documents.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
@@ -244,8 +265,9 @@ async def download_document(did: str, user: dict = Depends(current_user)):
     if raw is None:
         raise HTTPException(404, "File missing")
     data = crypto.decrypt(raw)
-    await audit(db, user["id"], "document_download", did)
-    return Response(data, media_type=doc["content_type"], headers={"Content-Disposition": f'attachment; filename="{doc["filename"]}"'})
+    await audit_logger.phi_event(db, user, doc["user_id"], "document_download", did)
+    name = doc["filename"] + (".vault" if doc.get("e2ee") else "")  # vault files are still ciphertext: the owner's browser decrypts them
+    return Response(data, media_type=doc["content_type"], headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.delete("/me/documents/{did}")

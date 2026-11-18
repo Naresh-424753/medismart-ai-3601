@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { api } from "../api.js";
 import { useAuth } from "../auth.jsx";
+import { passkeySupported } from "../passkey.js";
 import { Alert, Field, useAsync } from "../components/ui.jsx";
 
 const ROLES = [
@@ -30,7 +31,7 @@ function Shell({ title, children }) {
 const nextPath = () => { const n = new URLSearchParams(window.location.search).get("next") || ""; return /^\/(?!\/)[\w\-/.]*$/.test(n) ? n : "/"; };
 
 export function Login() {
-  const { user, login, verifyLoginOtp } = useAuth();
+  const { user, login, verifyLoginOtp, loginPasskey } = useAuth();
   const nav = useNavigate();
   const [f, setF] = useState({ email: "", password: "", otp: "" });
   const [needOtp, setNeedOtp] = useState(false);
@@ -61,6 +62,12 @@ export function Login() {
         <Alert tone="error">{error}</Alert>
         <button className="btn-primary w-full" disabled={busy}>{busy ? "Please wait…" : needOtp ? "Verify & log in" : "Log in"}</button>
       </form>
+      {passkeySupported() && !needOtp && (
+        <div className="space-y-1">
+          <button type="button" className="btn-ghost w-full border border-slate-300" disabled={busy} onClick={() => run(async () => { await loginPasskey(f.email); nav(nextPath()); })}>🔐 Login with fingerprint / face</button>
+          <p className="text-center text-xs text-slate-500">Works after you add this device in My Health, Security.</p>
+        </div>
+      )}
       <div className="flex justify-between text-sm">
         <Link className="text-brand-700 hover:underline" to="/forgot">Forgot password?</Link>
         <Link className="text-brand-700 hover:underline" to="/hospital">Hospital website</Link>
@@ -104,7 +111,7 @@ export function Register() {
           <Field label="Full name"><input className="input" required minLength={2} value={f.name} onChange={set("name")} /></Field>
           <Field label="Email"><input className="input" type="email" required value={f.email} onChange={set("email")} /></Field>
           <Field label="Mobile (optional, with country code)"><input className="input" placeholder="+919876543210" value={f.phone} onChange={set("phone")} /></Field>
-          <Field label="Password (8+ chars, letters and digits)"><input className="input" type="password" required minLength={8} value={f.password} onChange={set("password")} /></Field>
+          <Field label="Password (10+ chars: Aa, 1, symbol)"><input className="input" type="password" required minLength={10} value={f.password} onChange={set("password")} /></Field>
           <Field label="I am a">
             <select className="input" value={f.role} onChange={set("role")}>{ROLES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
           </Field>
@@ -159,7 +166,7 @@ export function ForgotPassword() {
           <>
             <Alert tone="info">{info}</Alert>
             <Field label="6-digit code"><input className="input" inputMode="numeric" maxLength={6} required value={f.otp} onChange={(e) => setF({ ...f, otp: e.target.value })} /></Field>
-            <Field label="New password"><input className="input" type="password" required minLength={8} value={f.new_password} onChange={(e) => setF({ ...f, new_password: e.target.value })} /></Field>
+            <Field label="New password (10+ chars: Aa, 1, symbol)"><input className="input" type="password" required minLength={10} value={f.new_password} onChange={(e) => setF({ ...f, new_password: e.target.value })} /></Field>
           </>
         )}
         <Alert tone="error">{error}</Alert>

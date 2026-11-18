@@ -10,7 +10,7 @@ import json
 import os
 import re
 
-from . import drugs, gemini, languages, symptoms
+from . import drugs, gemini, languages, llm_guard, symptoms
 
 # id, name, what they help with, keywords used to suggest the agent, first questions the intake asks, persona for the LLM
 AGENTS = [
@@ -129,6 +129,11 @@ def _system_prompt(agent: dict, language: str) -> str:
 
 
 async def _llm(system: str, messages: list[dict], max_tokens: int = 500, search: bool = True) -> str | None:
+    system, messages, restore = llm_guard.protect(system, messages)  # mask PII for every external provider below
+    return restore(await _llm_raw(system, messages, max_tokens, search))
+
+
+async def _llm_raw(system: str, messages: list[dict], max_tokens: int = 500, search: bool = True) -> str | None:
     if gemini.enabled():
         g = await gemini.generate(system, messages, max_tokens, search)
         if g:
